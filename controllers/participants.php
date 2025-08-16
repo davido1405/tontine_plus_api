@@ -213,6 +213,45 @@ function monTour(){
         send_response(false,"Aucun tour trouvé pour ce participant");
     }
 }
+
+
+function recupere_tour_actuel() {
+    $data = json_decode(file_get_contents("php://input"), true);
+
+    if (!isset($data['code_tontine']) || empty($data['code_tontine'])) {
+        send_response(false, "Veuillez fournir le code de la tontine");
+        exit;
+    }
+
+    $pdo = getDB();
+
+    $sql = "SELECT d.code_participant, d.nom_participant,d.prenoms_participant, o.ordre
+            FROM participer p
+            INNER JOIN ordre_tirage o 
+                ON o.code_participant = p.code_participant 
+               AND o.code_tontine = p.code_tontine
+            INNER JOIN tontine t 
+                ON t.code_tontine = p.code_tontine
+            INNER JOIN participants d ON d.code_participant=p.code_participant
+            WHERE t.tour_actuel = o.ordre 
+              AND o.code_tontine = ? 
+            LIMIT 1";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$data['code_tontine']]);
+    $receveur = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($receveur) {
+        send_response(true, "Le bénéficiaire du tour actuel est :", $receveur);
+    } else {
+        send_response(false, "Aucun bénéficiaire trouvé pour ce tour");
+    }
+
+    exit;
+}
+
+
+
 ?>
 
 

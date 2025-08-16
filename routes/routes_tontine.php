@@ -24,6 +24,16 @@ if(isset($_GET['action'])){
         case 'liste_tours':
             lister_tour();
             break;
+        case 'wallet_infos':
+            wallet_tontine_infos();
+            break;
+        case 'transactions':
+            transactions();
+        case 'ordre_paiement':
+            ordrePaiement();
+            break;
+        case 'retirer':
+            retrait();
         default:
             send_response(false,"Action incconue pour la tontine");
 

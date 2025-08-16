@@ -93,7 +93,6 @@ function ajouter_penalites(){
 
 }
 
-
 function payer_cotisation(){
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -126,18 +125,36 @@ function payer_cotisation(){
     //Générer un code de cotisation
     $code_coti=code_cotisation();
 
-    $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,date_paiement,id_mode_paiement) VALUES(?,?,?,?,?,?)");
+    $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?)");
     $stmt3->execute([
         $code_coti,
         $data['code_tontine'],
         $data['code_participant'],
         $data['montant'],
         date('Y-m-d H:i:s'),
-        $idModepai['id_mode_paiement']
+        $idModepai['id_mode_paiement'],
+        2
     ]);
     $row=$stmt3->rowCount();
     if($row>0){
-        send_response(true, "Paiement enregistré. En attente de validation.");
+        //Mettre à jour le solde du wallet de la tontine
+        //1-Récupérer l'ancien solde
+        $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
+        $stmt->execute([$data['code_tontine']]);
+        $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
+
+        if($ancienSolde){
+            //2-Ajouter le montant de la pénalité
+            $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
+            $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
+            $maj->execute([$nouveauSolde,$data['code_tontine']]);
+            if($maj->rowCount()>0){
+                send_response(true, "Paiement éffectué avec succès !");
+            }else{
+                send_response(false, "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
+            }
+        }
+        
     }else{
         send_response(false,"Le paiement a échoué! Veuillez réessayer");
     }
@@ -201,7 +218,23 @@ function payer_penalite() {
     ]);
 
     if ($stmtUpdate->rowCount() > 0) {
-        send_response(true, "Pénalité payée avec succès.");
+        //Mettre à jour le solde du wallet de la tontine
+        //1-Récupérer l'ancien solde
+        $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
+        $stmt->execute([$data['code_tontine']]);
+        $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
+
+        if($ancienSolde){
+            //2-Ajouter le montant de la pénalité
+            $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
+            $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
+            $maj->execute([$nouveauSolde,$data['code_tontine']]);
+            if($maj->rowCount()>0){
+                send_response(true, "Pénalité payée avec succès.");
+            }else{
+                send_response(false, "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
+            }
+        }
     } else {
         send_response(false, "Le paiement a échoué. Veuillez réessayer.");
     }

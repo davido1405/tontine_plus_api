@@ -20,11 +20,12 @@ if(isset($_GET['action'])){
         case 'supprimer_profil_participant':
             delete_participant();
             break;
-
         case 'mon_tour':
             monTour();
             break;
-            
+        case 'verifierTour':
+            recupere_tour_actuel();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 
