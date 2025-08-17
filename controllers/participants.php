@@ -67,6 +67,17 @@ function login_participant() {
                     "numero"=>$participant['numro_mobile_money'],
                     "code_tontine"=>$participations['code_tontine']
                 ]);
+            }else {
+                // Retourne quand même les infos sans tontine
+                send_response(true, "Connexion réussie (pas encore de tontine)", [
+                    "code_participant" => $participant['code_participant'],
+                    "nom" => $participant['nom_participant'],
+                    "prenoms" => $participant['prenoms_participant'],
+                    "email" => $participant['email_participant'],
+                    "type" => $participant['libelle_participant'],
+                    "numero" => $participant['numro_mobile_money'],
+                    "code_tontine" => ""
+                ]);
             }
         } else {
             send_response(false, "Identifiants ou mot de passe incorrects");
@@ -160,7 +171,7 @@ function update_profil() {
         if ($stmt->rowCount() > 0) {
             send_response(true, "Profil mis à jour avec succès.");
         }else{
-            send_response(false, "Aucune modification effectuée.");
+            send_response(false, "Vérifier les informations saisi");
         }
 
     } catch (PDOException $e) {
@@ -225,7 +236,7 @@ function recupere_tour_actuel() {
 
     $pdo = getDB();
 
-    $sql = "SELECT d.code_participant, d.nom_participant,d.prenoms_participant, o.ordre
+    $sql = "SELECT d.code_participant, d.nom_participant,d.prenoms_participant, o.ordre,o.date_tour
             FROM participer p
             INNER JOIN ordre_tirage o 
                 ON o.code_participant = p.code_participant 

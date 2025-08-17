@@ -240,43 +240,45 @@ function listeParticipants(){
 }
 
 function lister_tour(){
-    $data=json_decode(file_get_contents("php://input"),true);
-    if(!isset($data) || empty($data['code_tontine'])){
-        send_response(false,"Veuillez fournir le code tontine");
+
+    $data=json_decode(file_get_contents('php://input'),true);
+
+    if(!isset($data['code_tontine']) || empty($data['code_tontine'])){
+        return "Le code tontine est manquant";
     }
 
     $pdo=getDB();
 
-    // Récupérer type de tontine
+    // Récupérer la tontine et son type
     $stmt=$pdo->prepare("
-        SELECT t.*, o.libelle_type_tontine 
+        SELECT t.*, o.libelle_type_tontine, f.libelle_frequence 
         FROM tontine AS t 
         INNER JOIN type_tontine AS o 
-        ON o.id_type_tontine = t.id_type_tontine 
+            ON o.id_type_tontine = t.id_type_tontine
+        INNER JOIN frequence AS f
+            ON f.id_frequence = t.id_frequence
         WHERE code_tontine=?
     ");
     $stmt->execute([$data['code_tontine']]);
     $type=$stmt->fetch(PDO::FETCH_ASSOC);
 
     if(!$type){
-        send_response(false,"Type non défini pour cette tontine");
+        return "Type non défini pour cette tontine";
     }
     
     $nombreLimite = (int) $type['nombre_participant'];
 
-    // Nombre actuel
+    // Nombre actuel de participants
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
     $stmt->execute([$data['code_tontine']]);
     $nombreParticipant = (int) $stmt->fetchColumn();
 
-    // Vérifier si déjà généré
+    // Vérifier si les tours existent déjà
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM ordre_tirage WHERE code_tontine = ?");
     $stmt->execute([$data['code_tontine']]);
     $toursExistants = (int) $stmt->fetchColumn();
     
     if ($nombreParticipant == $nombreLimite && $toursExistants == 0) {
-        
-        // Récupérer participants
         $stmt1=$pdo->prepare("SELECT code_participant FROM participer WHERE code_tontine=?");
         $stmt1->execute([$data['code_tontine']]);
         $participants=$stmt1->fetchAll(PDO::FETCH_ASSOC);
@@ -287,16 +289,54 @@ function lister_tour(){
             shuffle($codes);
         }
 
-        // Insérer les tours
-        foreach ($codes as $i => $code) {
-            $ordre = $i + 1;
-            $stmt=$pdo->prepare("INSERT INTO ordre_tirage(code_tontine, code_participant, ordre, statut) VALUES(?,?,?,0)");
-            $stmt->execute([$data['code_tontine'], $code, $ordre]);
+        $startDate = new DateTime(); // date de début du premier tour
+
+        // Décalage du premier tour selon la fréquence
+        switch($type['libelle_frequence']){
+            case 'Mensuelle':
+                $startDate->modify('+1 month');
+                break;
+            case 'Hebdomadaire':
+                $startDate->modify('+1 week');
+                break;
+            case 'Journalière':
+                $startDate->modify('+1 day');
+                break;
         }
 
-        send_response(true,"Tours générés avec succès !");
+
+        foreach ($codes as $i => $code) {
+            $ordre = $i + 1;
+
+            // Calcul de la date selon la fréquence
+            $dateTour = clone $startDate;
+            
+            switch($type['libelle_frequence']){
+                case 'Mensuelle':
+                    $dateTour->modify('+'.($i).' month');
+                    break;
+                case 'Hebdomadaire':
+                    $dateTour->modify('+'.($i*7).' days');
+                    break;
+                case 'Journalière':
+                    $dateTour->modify('+'.($i).' day');
+                    break;
+            }
+
+            $stmt=$pdo->prepare("
+                INSERT INTO ordre_tirage(code_tontine, code_participant, ordre, statut, date_tour) 
+                VALUES(?,?,?,?,?)
+            ");
+            $stmt->execute([$data['code_tontine'], $code, $ordre, 0, $dateTour->format('Y-m-d H:i:s')]);
+        }
+
+        return "Tours générés avec succès !";
     }
+
+    return null;
 }
+
+
 
 
 //Récupérer les infos wallet_tontine
@@ -402,7 +442,7 @@ function ordrePaiement() {
 
     $pdo = getDB();
 
-    $sql = "SELECT p.code_participant, d.nom_participant, d.prenoms_participant, o.ordre, o.statut
+    $sql = "SELECT p.code_participant, d.nom_participant, d.prenoms_participant, o.ordre, o.statut,o.date_tour
             FROM participer AS p
             JOIN participants AS d 
                 ON d.code_participant = p.code_participant
@@ -427,7 +467,8 @@ function ordrePaiement() {
                 "nom_participant"    => $resultat['nom_participant'],
                 "prenoms_participant"=> $resultat['prenoms_participant'],
                 "ordre"              => $resultat['ordre'],
-                "statut"             => $resultat['statut']
+                "statut"             => $resultat['statut'],
+                "date_prevu"=>$resultat['date_tour']
             ];
         }
         send_response(true, "Ordre de paiement (tours à venir)", $utilisateurs);

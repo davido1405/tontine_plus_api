@@ -4,88 +4,87 @@ include_once __DIR__ . '/../helpers/responses.php';
 include_once __DIR__ . '/../controllers/tontine.php';
 
 
-function ajouter_participation(){
+function ajouter_participation() {
     $data = json_decode(file_get_contents('php://input'), true);
 
-    if (!isset($data['code_participant'], $data['code_tontine']) || empty($data['code_participant']) || empty($data['code_tontine'])) {
+    if (empty($data['code_participant']) || empty($data['code_tontine'])) {
         send_response(false, "Veuillez renseigner tous les champs !");
     }
 
     try {
         $pdo = getDB();
+        $pdo->beginTransaction(); // ✅ Début de la transaction
 
-        // Vérifie si la tontine existe
-        $stmt = $pdo->prepare("SELECT * FROM tontine WHERE code_tontine = ?");
+        // 🔒 Verrouiller la tontine pour éviter inscriptions concurrentes
+        $stmt = $pdo->prepare("SELECT * FROM tontine WHERE code_tontine = ? FOR UPDATE");
         $stmt->execute([$data['code_tontine']]);
         $isTontine = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$isTontine) {
+            $pdo->rollBack();
             send_response(false, "Cette tontine n'existe pas !");
         }
-        // Vérifier si la tontine est déjà pleine
+
         if ($isTontine['statut'] === 'Pleine') {
-            send_response(false, "Cette tontine est déjà pleine");
-        }
-
-        // Vérifie si le participant est déjà inscrit à cette tontine
-        $stmt = $pdo->prepare("SELECT * FROM participer WHERE code_participant = ? AND code_tontine = ?");
-        $stmt->execute([$data['code_participant'], $data['code_tontine']]);
-        if ($stmt->fetch()) {
-            send_response(false, "Vous êtes déjà inscrit dans cette tontine");
-        }
-        
-        // Inscrire le participant
-        $stmt = $pdo->prepare("
-            INSERT INTO participer (code_participant, code_tontine, date_participation)
-            VALUES (?, ?, ?)
-        ");
-        $stmt->execute([$data['code_participant'], $data['code_tontine'], date("Y-m-d H:i:s")]);
-
-        // Recompter les participants après insertion
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
-        $stmt->execute([$data['code_tontine']]);
-        $nombreParticipant = (int) $stmt->fetchColumn();
-
-        // Si on atteint la limite -> mettre à jour statut + générer les tours
-        if ($nombreParticipant >= $nombreLimite) {
-            $stmt = $pdo->prepare("UPDATE tontine SET statut = ? WHERE code_tontine = ?");
-            $stmt->execute(["Pleine", $data['code_tontine']]);
-            lister_tour();
-        }
-
-        send_response(true, "Vous participez désormais à cette tontine.");
-
-
-        // Vérifie si le participant est déjà inscrit à une autre tontine
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_participant = ?");
-        $stmt->execute([$data['code_participant']]);
-        $nombreParticipation = (int) $stmt->fetchColumn();
-
-        if ($nombreParticipation >= 1) {
-            send_response(false, "Vous êtes déjà inscrit dans une autre tontine");
+            $pdo->rollBack();
+            send_response(false, "Cette tontine est déjà pleine !");
         }
 
         // Vérifie si le participant existe
         $stmt = $pdo->prepare("SELECT * FROM participants WHERE code_participant = ?");
         $stmt->execute([$data['code_participant']]);
         if (!$stmt->fetch()) {
-            send_response(false, "Participant introuvable");
+            $pdo->rollBack();
+            send_response(false, "Participant introuvable !");
         }
 
-        // Insère la participation
+        // Vérifie si le participant est déjà inscrit à CETTE tontine
+        $stmt = $pdo->prepare("SELECT * FROM participer WHERE code_participant = ? AND code_tontine = ?");
+        $stmt->execute([$data['code_participant'], $data['code_tontine']]);
+        if ($stmt->fetch()) {
+            $pdo->rollBack();
+            send_response(false, "Vous êtes déjà inscrit dans cette tontine !");
+        }
+
+        // Vérifie si le participant est déjà inscrit ailleurs
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_participant = ?");
+        $stmt->execute([$data['code_participant']]);
+        if ((int)$stmt->fetchColumn() > 0) {
+            $pdo->rollBack();
+            send_response(false, "Vous êtes déjà inscrit dans une autre tontine !");
+        }
+
+        // ✅ Insertion du participant
         $stmt = $pdo->prepare("INSERT INTO participer (code_participant, code_tontine, date_participation) VALUES (?, ?, ?)");
         $stmt->execute([$data['code_participant'], $data['code_tontine'], date("Y-m-d H:i:s")]);
 
-        if ($stmt->rowCount() > 0) {
-            send_response(true, "Vous participez désormais à cette tontine.");
-        } else {
-            send_response(false, "Inscription échouée. Veuillez réessayer !");
+        // Recompter
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
+        $stmt->execute([$data['code_tontine']]);
+        $nombreParticipant = (int) $stmt->fetchColumn();
+
+        $limite = (int)$isTontine['nombre_participant'];
+
+        if ($nombreParticipant >= $limite) {
+            $stmt = $pdo->prepare("UPDATE tontine SET statut = 'Pleine' WHERE code_tontine = ?");
+            $stmt->execute([$data['code_tontine']]);
+            // ⚠️ On ne bloque pas la réponse ici
+            register_shutdown_function(function() use ($data) {
+                lister_tour($data['code_tontine']);
+            });
         }
 
+        $pdo->commit(); // ✅ Valider la transaction
+        send_response(true, "Vous participez désormais à cette tontine.");
+
     } catch (PDOException $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack(); // rollback si erreur
+        }
         send_response(false, "Erreur : " . $e->getMessage());
     }
 }
+
 
 
 function verifier_participation() {
