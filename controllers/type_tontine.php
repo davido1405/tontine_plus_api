@@ -47,6 +47,26 @@ function lister_frequence(){
     }
 }
 
+function lister_frequence_paiement(){
+    $data=json_decode(file_get_contents ("php://input"),true);
+
+    $pdo=getDB();
+    $stmt=$pdo->prepare('SELECT * FROM frequence_paiement');
+    $stmt->execute();
+    $frequences=$stmt->fetchall(PDO::FETCH_ASSOC);
+    if($frequences){
+        $formated=[];
+        foreach($frequences as $frequence){
+            $formated[]=[
+                'frequence_paiement'=>$frequence['libelle_frequence_paiement']
+            ];
+        };
+
+        send_response(true,"Liste des frequences:",$formated);
+    }else{
+        send_response(false, "Aucune frequence trouvée !");
+    }
+}
 
 
 function ajouter_type_tontine(){

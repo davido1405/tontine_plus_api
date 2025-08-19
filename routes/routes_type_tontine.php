@@ -20,6 +20,9 @@ if(isset($_GET['action'])){
         case 'lister_frequence':
             lister_frequence();
             break;
+        case 'lister_frequence_paiement':
+            lister_frequence_paiement();
+            break;
         default:
             send_response(false,"Action incconue pour le type de tontine");
 

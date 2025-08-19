@@ -27,7 +27,7 @@ function code_wallet(){
 function create_tontine(){
     $data = json_decode(file_get_contents("php://input"), true);
 
-    if (!isset($data['code_participant'],$data['nom_tontine'], $data['type_tontine'], $data['montant_cotisation'], $data['nombre_participant'], $data['frequence'])) {
+    if (!isset($data['code_participant'],$data['nom_tontine'], $data['type_tontine'], $data['montant_cotisation'], $data['nombre_participant'], $data['frequence'],$data['frequence_paiement'],$data['montant_penalite'])) {
         send_response(false, "Champs obligatoires manquants.");
     }
 
@@ -53,6 +53,15 @@ function create_tontine(){
             send_response(false, "Fréquence invalide.");
         }
 
+        //Récupérer l'id_frequence de paiement
+        $stmt5=$pdo->prepare("SELECT id_frequence_paiement FROM frequence_paiement WHERE libelle_frequence_paiement=?");
+        $stmt5->execute([$data['frequence_paiement']]);
+        $frequence_paiement=$stmt5->fetch(PDO::FETCH_ASSOC);
+
+        if (!$frequence_paiement) {
+            send_response(false, "Fréquence invalide.");
+        }
+
 
         //Vérifier l'unicité de l'organisation d'une tontine
         $stmt3=$pdo->prepare("SELECT code_tontine FROM organiser_tontine WHERE code_participant=?");
@@ -64,7 +73,7 @@ function create_tontine(){
         }
 
         //Ajout de la tontine
-        $sql=$pdo->prepare("INSERT INTO tontine(code_tontine,nom_tontine,montant_cotisation,nombre_participant,id_frequence,id_type_tontine,date_creation,montant_penalite) VALUES(?,?,?,?,?,?,?,?)");
+        $sql=$pdo->prepare("INSERT INTO tontine(code_tontine,nom_tontine,montant_cotisation,nombre_participant,id_frequence,id_frequence_paiement,id_type_tontine,date_creation,montant_penalite) VALUES(?,?,?,?,?,?,?,?,?)");
 
         //Definir la date
         $date=date("Y-m-d H:i:s");
@@ -78,6 +87,7 @@ function create_tontine(){
                 $data['montant_cotisation'],
                 $data['nombre_participant'],
                 $frequence['id_frequence'],
+                $frequence_paiement['id_frequence_paiement'],
                 $type['id_type_tontine'],
                 $date,
                 $data['montant_penalite'] ?? 1000
@@ -133,12 +143,14 @@ function get_tontine_details() {
 
     try {
         $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT o.code_tontine, o.nom_tontine, o.montant_cotisation, o.nombre_participant, f.libelle_frequence,o.statut,t.libelle_type_tontine,o.date_creation,w.code_wallet
+        $stmt = $pdo->prepare("SELECT o.code_tontine, o.nom_tontine, o.montant_cotisation, o.nombre_participant, f.libelle_frequence,p.libelle_frequence_paiement,o.statut,t.libelle_type_tontine,o.date_creation,w.code_wallet
                                FROM tontine as o
                                INNER JOIN type_tontine as t
                                ON o.id_type_tontine=t.id_type_tontine
                                INNER JOIN frequence as f
                                ON o.id_frequence=f.id_frequence
+                               INNER JOIN frequence_paiement as p
+                               ON o.id_frequence_paiement=p.id_frequence_paiement
                                INNER JOIN wallet_tontine as w
                                ON w.code_tontine=o.code_tontine
                                WHERE o.code_tontine = ?");
@@ -152,6 +164,7 @@ function get_tontine_details() {
                 "montant" => $tontine['montant_cotisation'],
                 "nombre participant" => $tontine['nombre_participant'],
                 "frequence" => $tontine['libelle_frequence'],
+                "frequence_paiement"=>$tontine['libelle_frequence_paiement'],
                 "statut" => $tontine['statut'],
                 "type" => $tontine['libelle_type_tontine'],
                 "date creation" => $tontine['date_creation'],
@@ -249,14 +262,14 @@ function lister_tour(){
 
     $pdo=getDB();
 
-    // Récupérer la tontine et son type
+    // Récupérer la tontine et sa fréquence de paiement
     $stmt=$pdo->prepare("
-        SELECT t.*, o.libelle_type_tontine, f.libelle_frequence 
+        SELECT t.*, o.libelle_type_tontine, fp.libelle_frequence_paiement
         FROM tontine AS t 
         INNER JOIN type_tontine AS o 
             ON o.id_type_tontine = t.id_type_tontine
-        INNER JOIN frequence AS f
-            ON f.id_frequence = t.id_frequence
+        INNER JOIN frequence_paiement AS fp
+            ON fp.id_frequence_paiement = t.id_frequence_paiement
         WHERE code_tontine=?
     ");
     $stmt->execute([$data['code_tontine']]);
@@ -291,35 +304,34 @@ function lister_tour(){
 
         $startDate = new DateTime(); // date de début du premier tour
 
-        // Décalage du premier tour selon la fréquence
-        switch($type['libelle_frequence']){
+        // Décalage du premier tour selon la fréquence de paiement
+        switch($type['libelle_frequence_paiement']){
             case 'Mensuelle':
                 $startDate->modify('+1 month');
                 break;
             case 'Hebdomadaire':
                 $startDate->modify('+1 week');
                 break;
-            case 'Journalière':
-                $startDate->modify('+1 day');
+            case 'Trimestrielle':
+                $startDate->modify('+3 month');
                 break;
         }
-
 
         foreach ($codes as $i => $code) {
             $ordre = $i + 1;
 
-            // Calcul de la date selon la fréquence
+            // Calcul de la date de chaque tour
             $dateTour = clone $startDate;
             
-            switch($type['libelle_frequence']){
+            switch($type['libelle_frequence_paiement']){
                 case 'Mensuelle':
                     $dateTour->modify('+'.($i).' month');
                     break;
                 case 'Hebdomadaire':
                     $dateTour->modify('+'.($i*7).' days');
                     break;
-                case 'Journalière':
-                    $dateTour->modify('+'.($i).' day');
+                case 'Trimestrielle':
+                    $dateTour->modify('+'.($i*3).' month');
                     break;
             }
 
@@ -335,6 +347,7 @@ function lister_tour(){
 
     return null;
 }
+
 
 
 
