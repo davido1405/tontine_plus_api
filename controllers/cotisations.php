@@ -21,78 +21,89 @@ function ajouter_penalites(){
 
     $pdo=getDB();
 
-    //Recupérer la date de la dernière cotisation
-    $stmt1=$pdo->prepare("SELECT * FROM cotisations WHERE code_participant=? ORDER BY date_paiement DESC LIMIT 1");
-    $stmt1->execute([$data['code_participant']]);
-    $dernierPaiement=$stmt1->fetch(PDO::FETCH_ASSOC);
+    try {
 
-    if (!$dernierPaiement) {
-        send_response(false, "Aucune cotisation enregistrée pour ce participant.");
-    }
+        $pdo->beginTransaction();
 
-    //Recupérer l'id_frequence de paiment de la tontine
-    $stmt2=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
-    $stmt2->execute([$data['code_tontine']]);
-    $tontine=$stmt2->fetch(PDO::FETCH_ASSOC);
+        //Recupérer la date de la dernière cotisation
+        $stmt1=$pdo->prepare("SELECT * FROM cotisations WHERE code_participant=? ORDER BY date_paiement DESC LIMIT 1");
+        $stmt1->execute([$data['code_participant']]);
+        $dernierPaiement=$stmt1->fetch(PDO::FETCH_ASSOC);
 
-    if (!$tontine) {
-        send_response(false, "Tontine introuvable");
-    }
-
-    //Recupérer la frequence de paiment de la tontine
-    $stmt3=$pdo->prepare("SELECT * FROM frequence WHERE id_frequence=?");
-    $stmt3->execute([$tontine['id_frequence']]);
-    $frequence=$stmt3->fetch(PDO::FETCH_ASSOC);
-
-    if (!$frequence) {
-        send_response(false, "Fréquence introuvable");
-    }
-
-    $now = new DateTime();
-    $datePai = new DateTime($dernierPaiement['date_paiement']); // suppose que tu l’as récupéré dans la BDD
-    $interval = $datePai->diff($now);//recupère le nombre de jour du dernier paiement jusqu'à maintenant
-
-
-    //Vérifier si penalité ou pas
-    $ajouter_penalite = false;
-
-    switch($frequence['libelle_frequence']){
-        case 'Mensuelle':
-            if ($interval->days >= 30) $ajouter_penalite = true;
-            break;
-        case 'Hebdomadaire':
-            if ($interval->days >= 7) $ajouter_penalite = true;
-            break;
-        case 'Journalière':
-            if ($interval->days >= 1) $ajouter_penalite = true;
-            break;
-        default:
-            send_response(false, "Type de fréquence de cotisation non pris en compte");
-            break;
-    }
-
-    if ($ajouter_penalite) {
-        $stmt5 = $pdo->prepare("INSERT INTO penalite(code_participant, code_tontine, montant, raison, date_penalite, statut) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt5->execute([
-            $data['code_participant'],
-            $data['code_tontine'],
-            $data['montant'],
-            $data['raison'] ?? "Retard de paiement",
-            date("Y-m-d H:i:s"),
-            $data['statut'] ?? "Non payée"
-        ]);
-
-        if ($stmt5->rowCount() > 0) {
-            send_response(true, "Pénalité de " . $data['montant'] . " ajoutée avec succès !");
-        } else {
-            send_response(false, "Erreur lors de l'ajout de la pénalité");
+        if (!$dernierPaiement) {
+            throw new Exception("Aucune cotisation enregistrée pour ce participant.");
         }
-    } else {
-        send_response(true, "Aucune pénalité à ajouter. Le délai n'est pas dépassé.");
+
+        //Recupérer l'id_frequence de paiment de la tontine
+        $stmt2=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
+        $stmt2->execute([$data['code_tontine']]);
+        $tontine=$stmt2->fetch(PDO::FETCH_ASSOC);
+
+        if (!$tontine) {
+            throw new Exception("Tontine introuvable");
+        }
+
+        //Recupérer la frequence de paiment de la tontine
+        $stmt3=$pdo->prepare("SELECT * FROM frequence WHERE id_frequence=?");
+        $stmt3->execute([$tontine['id_frequence']]);
+        $frequence=$stmt3->fetch(PDO::FETCH_ASSOC);
+
+        if (!$frequence) {
+            throw new Exception("Fréquence introuvable");
+        }
+
+        $now = new DateTime();
+        $datePai = new DateTime($dernierPaiement['date_paiement']); // suppose que tu l’as récupéré dans la BDD
+        $interval = $datePai->diff($now);//recupère le nombre de jour du dernier paiement jusqu'à maintenant
+
+
+        //Vérifier si penalité ou pas
+        $ajouter_penalite = false;
+
+        switch($frequence['libelle_frequence']){
+            case 'Mensuelle':
+                if ($interval->days >= 30) $ajouter_penalite = true;
+                break;
+            case 'Hebdomadaire':
+                if ($interval->days >= 7) $ajouter_penalite = true;
+                break;
+            case 'Journalière':
+                if ($interval->days >= 1) $ajouter_penalite = true;
+                break;
+            default:
+                throw new Exception("Type de fréquence de cotisation non pris en compte");
+                break;
+        }
+
+        if ($ajouter_penalite) {
+            $stmt5 = $pdo->prepare("INSERT INTO penalites(code_participant, code_tontine, montant, raison, date_penalite, statut) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt5->execute([
+                $data['code_participant'],
+                $data['code_tontine'],
+                $data['montant'],
+                $data['raison'] ?? "Retard de paiement",
+                date("Y-m-d H:i:s"),
+                $data['statut'] ?? "Non payée"
+            ]);
+
+            if ($stmt5->rowCount()==0) {
+                throw new Exception("Erreur lors de l'ajout de la pénalité");
+            }
+        }
+
+        $pdo->commit();
+
+        $message=$ajouter_penalite==true? "Pénalité de " . $data['montant'] . " ajoutée avec succès !":"Aucune pénalité à ajouter. Le délai n'est pas dépassé.";
+        send_response(true,$message);
+    }  catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
     }
 
 }
 
+
+//Fonction pour payer les cotisations
 function payer_cotisation(){
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -101,62 +112,69 @@ function payer_cotisation(){
     }
     $pdo=getDB();
 
-    //Vérifier l'existance de la tontine
-    $stmt4=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
-    $stmt4->execute([$data['code_tontine']]);
-    $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
+    try {
 
-    if(!$tontine){
-        send_response(false,"Cette tontine n'existe pas.");
-    }else if($data['montant']!=$tontine['montant_cotisation']){
-        send_response(false,"Veuillez saisir un montnant valide");
-    }
+        $pdo->beginTransaction();
+        //Vérifier l'existance de la tontine
+        $stmt4=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
+        $stmt4->execute([$data['code_tontine']]);
+        $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
 
+        if(!$tontine){
+            throw new Exception("Cette tontine n'existe pas.");
+        }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
+            throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
+        }else if($data['montant']!=$tontine['montant_cotisation']){
+            throw new Exception("Veuillez saisir un montnant valide");
+        }
 
-    //Récupérer l'id du mode paiement
-    $stmt1=$pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement=?");
-    $stmt1->execute([$data['libelle_mode_paiement']]);
-    $idModepai=$stmt1->fetch(PDO::FETCH_ASSOC);
-    //Verifier la prise en compte du mode de paiement
-    if(!$idModepai){
-        send_response(false,"Mode paiement non pris en charge!");
-    }
+        //Récupérer l'id du mode paiement
+        $stmt1=$pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement=?");
+        $stmt1->execute([$data['libelle_mode_paiement']]);
+        $idModepai=$stmt1->fetch(PDO::FETCH_ASSOC);
+        //Verifier la prise en compte du mode de paiement
+        if(!$idModepai){
+            throw new Exception("Mode paiement non pris en charge!");
+        }
 
-    //Générer un code de cotisation
-    $code_coti=code_cotisation();
+        //Générer un code de cotisation
+        $code_coti=code_cotisation();
 
-    $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?)");
-    $stmt3->execute([
-        $code_coti,
-        $data['code_tontine'],
-        $data['code_participant'],
-        $data['montant'],
-        date('Y-m-d H:i:s'),
-        $idModepai['id_mode_paiement'],
-        2
-    ]);
-    $row=$stmt3->rowCount();
-    if($row>0){
-        //Mettre à jour le solde du wallet de la tontine
+        $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?)");
+        $stmt3->execute([
+            $code_coti,
+            $data['code_tontine'],
+            $data['code_participant'],
+            $data['montant'],
+            date('Y-m-d H:i:s'),
+            $idModepai['id_mode_paiement'],
+            2
+        ]);
+        $row=$stmt3->rowCount();
+        if($row==0){
+           throw new Exception("Le paiement a échoué! Veuillez réessayer");
+        }
+         //Mettre à jour le solde du wallet de la tontine
         //1-Récupérer l'ancien solde
         $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
         $stmt->execute([$data['code_tontine']]);
         $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
-
-        if($ancienSolde){
-            //2-Ajouter le montant de la pénalité
-            $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
-            $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
-            $maj->execute([$nouveauSolde,$data['code_tontine']]);
-            if($maj->rowCount()>0){
-                send_response(true, "Paiement éffectué avec succès !");
-            }else{
-                send_response(false, "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
-            }
+        if(!$ancienSolde){
+            throw new Exception("Une erreur s'est produite lors de la mis à jour du solde de la tontine");
         }
-        
-    }else{
-        send_response(false,"Le paiement a échoué! Veuillez réessayer");
+        //2-Ajouter le montant de la pénalité
+        $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
+        $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
+        $maj->execute([$nouveauSolde,$data['code_tontine']]);
+        if($maj->rowCount()==0){
+            throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
+        }
+
+        $pdo->commit();
+        send_response(true, "Paiement éffectué avec succès !");
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
     }
 }
 
@@ -172,72 +190,80 @@ function payer_penalite() {
     }
 
     $pdo = getDB();
+    try{
 
-    // Vérifier l'existence de la tontine
-    $stmt = $pdo->prepare("SELECT montant_penalite FROM tontine WHERE code_tontine = ?");
-    $stmt->execute([$data['code_tontine']]);
-    $tontine = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pdo->beginTransaction();
 
-    if (!$tontine) {
-        send_response(false, "Cette tontine n'existe pas.");
-    }
+        // Vérifier l'existence de la tontine
+        $stmt = $pdo->prepare("SELECT montant_penalite,etat_tontine,statut FROM tontine WHERE code_tontine = ?");
+        $stmt->execute([$data['code_tontine']]);
+        $tontine = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if ($data['montant'] != $tontine['montant_penalite']) {
-        send_response(false, "Veuillez saisir un montant de pénalité valide.");
-    }
+        if (!$tontine) {
+            throw new Exception("Cette tontine n'existe pas.");
+        }
 
-    // Vérifier que la pénalité est bien non payée
-    $stmtCheck = $pdo->prepare("SELECT * FROM penalites WHERE code_participant = ? AND code_tontine = ? AND statut = 'Non payée'");
-    $stmtCheck->execute([$data['code_participant'], $data['code_tontine']]);
-    $penalite = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+        if($tontine['statut']!='Pleine' && $tontine['etat_tontine']!="En cours"){
+            throw new Exception("Vous n'êtes pas autorisé(e) à payer des pénalités pour le moment.");
+        }
 
-    if (!$penalite) {
-        send_response(false, "Aucune pénalité non payée trouvée.");
-    }
+        if ($data['montant'] != $tontine['montant_penalite']) {
+            throw new Exception("Veuillez saisir un montant de pénalité valide.");
+        }
 
-    // Récupérer l'ID du mode de paiement
-    $stmt1 = $pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement = ?");
-    $stmt1->execute([$data['libelle_mode_paiement']]);
-    $idModepai = $stmt1->fetch(PDO::FETCH_ASSOC);
+        
 
-    if (!$idModepai) {
-        send_response(false, "Mode de paiement non pris en charge !");
-    }
+        // Vérifier que la pénalité est bien non payée
+        $stmtCheck = $pdo->prepare("SELECT * FROM penalites WHERE code_participant = ? AND code_tontine = ? AND statut = 'Non payée'");
+        $stmtCheck->execute([$data['code_participant'],$data['code_tontine']]);
+        $penalite = $stmtCheck->fetch(PDO::FETCH_ASSOC);
 
-    // Mise à jour de la pénalité
-    $stmtUpdate = $pdo->prepare("
-        UPDATE penalites 
-        SET statut = ?, date_paiement = ?, id_mode_paiement = ? 
-        WHERE id_penalite = ?
-    ");
-    $stmtUpdate->execute([
-        "Payée",
-        date('Y-m-d H:i:s'),
-        $idModepai['id_mode_paiement'],
-        $penalite['id_penalite']
-    ]);
+        if (!$penalite) {
+            throw new Exception("Aucune pénalité impayée trouvée.");
+        }
 
-    if ($stmtUpdate->rowCount() > 0) {
+        // Récupérer l'ID du mode de paiement
+        $stmt1 = $pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement = ?");
+        $stmt1->execute([$data['libelle_mode_paiement']]);
+        $idModepai = $stmt1->fetch(PDO::FETCH_ASSOC);
+
+        if (!$idModepai) {
+            throw new Exception("Mode de paiement non pris en charge !");
+        }
+
+        // Mise à jour de la pénalité
+        $stmtUpdate = $pdo->prepare("
+            UPDATE penalites 
+            SET statut = ?, date_paiement = ?, id_mode_paiement = ? 
+            WHERE id_penalite = ?
+        ");
+        $stmtUpdate->execute([
+            "Payée",
+            date('Y-m-d H:i:s'),
+            $idModepai['id_mode_paiement'],
+            $penalite['id_penalite']
+        ]);
+
         //Mettre à jour le solde du wallet de la tontine
         //1-Récupérer l'ancien solde
         $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
         $stmt->execute([$data['code_tontine']]);
         $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
-
-        if($ancienSolde){
-            //2-Ajouter le montant de la pénalité
-            $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
-            $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
-            $maj->execute([$nouveauSolde,$data['code_tontine']]);
-            if($maj->rowCount()>0){
-                send_response(true, "Pénalité payée avec succès.");
-            }else{
-                send_response(false, "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
-            }
+        //2-Ajouter le montant de la pénalité
+        $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
+        $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
+        $maj->execute([$nouveauSolde,$data['code_tontine']]);
+        if($maj->rowCount()==0){
+            throw new Exception( "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
         }
-    } else {
-        send_response(false, "Le paiement a échoué. Veuillez réessayer.");
-    }
+
+        $pdo->commit();
+        send_response(true, "Pénalité payée avec succès.",$data['montant']);
+
+    }catch(Throwable $e){
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
+};
 }
 
 
@@ -289,7 +315,7 @@ function voir_mes_penalites(){
     $penalites=$stmt1->fetchAll(PDO::FETCH_ASSOC);
 
     if(!$penalites){
-        send_response(false,"Historique de pénalité vide");
+        send_response(false,"Historique de pénalités vide");
     }
 
     $formated=[];
@@ -302,7 +328,7 @@ function voir_mes_penalites(){
             "statut_paiement"=>$penalite['statut']
         ];
     }
-    send_response(true,"Votre historique de cotisation est le suivant: ",$formated);
+    send_response(true,"Votre historique de pénalités est le suivant: ",$formated);
 }
 
 function total_cotisation(){

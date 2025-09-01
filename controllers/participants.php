@@ -58,7 +58,7 @@ function login_participant() {
             $participations=$stmt2->fetch(PDO::FETCH_ASSOC);
             if($participations){
                 // Tu peux retourner plus de données ici si tu veux (nom, type, etc.)
-                send_response(true, "Connexion réussie", [
+                send_response(true,"Connexion réussie",[
                     "code_participant" => $participant['code_participant'],
                     "nom" => $participant['nom_participant'],
                     "prenoms" => $participant['prenoms_participant'],
@@ -69,7 +69,7 @@ function login_participant() {
                 ]);
             }else {
                 // Retourne quand même les infos sans tontine
-                send_response(true, "Connexion réussie (pas encore de tontine)", [
+                send_response(true,"Connexion réussie (pas encore de tontine)",[
                     "code_participant" => $participant['code_participant'],
                     "nom" => $participant['nom_participant'],
                     "prenoms" => $participant['prenoms_participant'],
@@ -80,11 +80,11 @@ function login_participant() {
                 ]);
             }
         } else {
-            send_response(false, "Identifiants ou mot de passe incorrects");
+            send_response(false,"Identifiants ou mot de passe incorrects");
         }
 
     } catch (PDOException $e) {
-        send_response(false, "Erreur : " . $e->getMessage());
+        send_response(false,"Erreur : " . $e->getMessage());
     }
 }
 
@@ -93,7 +93,7 @@ function get_profil() {
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_participant']) || empty($data['code_participant'])) {
-        send_response(false, "Le code du participant est requis.");
+        send_response(false,"Le code du participant est requis.");
     }
 
     try {
@@ -105,7 +105,7 @@ function get_profil() {
         $participant = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($participant) {
-            send_response(true, "Profil récupéré avec succès", [
+            send_response(true,"Profil récupéré avec succès", [
                 "code_participant" => $participant['code_participant'],
                 "nom" => $participant['nom_participant'],
                 "prenoms" => $participant['prenoms_participant'],
@@ -114,7 +114,7 @@ function get_profil() {
                 "numero_mobile_money" => $participant['numro_mobile_money']
             ]);
         } else {
-            send_response(false, "Participant introuvable.");
+            send_response(false,"Participant introuvable.");
         }
 
     } catch (PDOException $e) {
@@ -185,7 +185,7 @@ function delete_participant() {
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_participant'])) {
-        send_response(false, 'Entrez votre code participant');
+        send_response(false, 'Entrez le code participant');
     }
 
     try {

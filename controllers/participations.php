@@ -66,7 +66,7 @@ function ajouter_participation() {
         $limite = (int)$isTontine['nombre_participant'];
 
         if ($nombreParticipant >= $limite) {
-            $stmt = $pdo->prepare("UPDATE tontine SET statut = 'Pleine' WHERE code_tontine = ?");
+            $stmt = $pdo->prepare("UPDATE tontine SET statut = 'Pleine',etat_tontine='En cours' WHERE code_tontine = ?");
             $stmt->execute([$data['code_tontine']]);
             // ⚠️ On ne bloque pas la réponse ici
             register_shutdown_function(function() use ($data) {

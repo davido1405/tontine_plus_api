@@ -30,10 +30,12 @@ function create_tontine(){
     if (!isset($data['code_participant'],$data['nom_tontine'], $data['type_tontine'], $data['montant_cotisation'], $data['nombre_participant'], $data['frequence'],$data['frequence_paiement'],$data['montant_penalite'])) {
         send_response(false, "Champs obligatoires manquants.");
     }
+    
+    
+    $pdo=getDB();
 
     try{
-
-        $pdo=getDB();
+        $pdo->beginTransaction();
 
         //Récupérer l'id_type_tontine
         $stmt1=$pdo->prepare("SELECT id_type_tontine FROM type_tontine WHERE libelle_type_tontine=?");
@@ -41,7 +43,7 @@ function create_tontine(){
         $type=$stmt1->fetch(PDO::FETCH_ASSOC);
 
         if (!$type) {
-            send_response(false, "Type de tontine invalide.");
+            throw new Exception("Type de tontine invalide.");
         }
 
         //Récupérer l'id_frequence
@@ -50,7 +52,7 @@ function create_tontine(){
         $frequence=$stmt2->fetch(PDO::FETCH_ASSOC);
 
         if (!$frequence) {
-            send_response(false, "Fréquence invalide.");
+            throw new Exception("Fréquence invalide.");
         }
 
         //Récupérer l'id_frequence de paiement
@@ -59,7 +61,7 @@ function create_tontine(){
         $frequence_paiement=$stmt5->fetch(PDO::FETCH_ASSOC);
 
         if (!$frequence_paiement) {
-            send_response(false, "Fréquence invalide.");
+            throw new Exception("Fréquence de paiement invalide.");
         }
 
 
@@ -69,7 +71,7 @@ function create_tontine(){
         $organiseDeja=$stmt3->fetch(PDO::FETCH_ASSOC);
 
         if($organiseDeja){
-            send_response(false,"Vous ne pouvez organiser que une tontine à la fois");
+            throw new Exception("Vous ne pouvez organiser que une tontine à la fois");
         }
 
         //Ajout de la tontine
@@ -106,28 +108,22 @@ function create_tontine(){
         $sql4=$pdo->prepare("INSERT INTO participer(code_participant,code_tontine,date_participation) VALUES(?,?,?)");
         $sql4->execute([$data['code_participant'],$code_ton,$date]);
 
-        if ($sql && $sql2 && $sql3 && $sql4->rowCount() > 0) {
-            $code_wallet=code_wallet();
-            $stmt=$pdo->prepare('INSERT INTO wallet_tontine(code_wallet,code_tontine,solde_tontine) VALUES(?,?,?)');
-            $stmt->execute([$code_wallet,$code_ton,0]);
-            if($stmt){
-                send_response(true, 
-                    "Tontine créée avec succès", 
-                    [
-                        "code_tontine" => $code_ton,
-                        "organisateur" => $data['code_participant'],
-                        "date_creation" => $date,
-                        "code_wallet" =>$code_wallet
-                    ]);
-            }
-            
-        } else {
-            send_response(false, "Échec de la création de la tontine.");
-        }
+        $code_wallet=code_wallet();
+        $stmt=$pdo->prepare('INSERT INTO wallet_tontine(code_wallet,code_tontine,solde_tontine) VALUES(?,?,?)');
+        $stmt->execute([$code_wallet,$code_ton,0]);
 
-        
-    }catch(PDOException $e){
-        send_response(false, "Erreur: ". $e->getMessage());
+        $pdo->commit();
+
+        send_response(true,"Tontine créée avec succès", 
+        [
+            "code_tontine" => $code_ton,
+            "organisateur" => $data['code_participant'],
+            "date_creation" => $date,
+            "code_wallet" =>$code_wallet
+        ]);
+    }catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
     }
 }
 
@@ -143,7 +139,7 @@ function get_tontine_details() {
 
     try {
         $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT o.code_tontine, o.nom_tontine, o.montant_cotisation, o.nombre_participant, f.libelle_frequence,p.libelle_frequence_paiement,o.statut,t.libelle_type_tontine,o.date_creation,w.code_wallet
+        $stmt = $pdo->prepare("SELECT o.code_tontine, o.nom_tontine, o.montant_cotisation, o.nombre_participant, f.libelle_frequence,p.libelle_frequence_paiement,o.statut,t.libelle_type_tontine,o.date_creation,o.etat_tontine,w.code_wallet
                                FROM tontine as o
                                INNER JOIN type_tontine as t
                                ON o.id_type_tontine=t.id_type_tontine
@@ -167,6 +163,7 @@ function get_tontine_details() {
                 "frequence_paiement"=>$tontine['libelle_frequence_paiement'],
                 "statut" => $tontine['statut'],
                 "type" => $tontine['libelle_type_tontine'],
+                "etat_tontine"=>$tontine['etat_tontine'],
                 "date creation" => $tontine['date_creation'],
                 "code_wallet" =>$tontine['code_wallet']
             ]);
@@ -506,7 +503,7 @@ function retrait() {
         $pdo->beginTransaction();
 
         // 1) Récupérer ordre, statut, tour_actuel et solde en lockant
-        $sql = "SELECT o.ordre, o.statut, t.tour_actuel, w.solde_tontine
+        $sql = "SELECT o.ordre, o.statut, t.tour_actuel,t.etat_tontine,t.nombre_participant, w.solde_tontine
                 FROM ordre_tirage o
                 JOIN tontine t ON t.code_tontine = o.code_tontine
                 JOIN wallet_tontine w ON w.code_tontine = o.code_tontine
@@ -557,9 +554,35 @@ function retrait() {
             VALUES (?,?,?, NOW())");
         $u4->execute([$data['code_participant'], $data['code_tontine'], $montant]);
 
+        // 7) Vérifier l'état de la tontine si terminée ou pas
+        //Récupérer le tour actuel et le nombre de participant
+        $u6 =$pdo->prepare("SELECT nombre_participant,tour_actuel,etat_tontine FROM tontine WHERE code_tontine=?");
+        $u6->execute([$data['code_tontine']]);
+        $nombreP=$u6->fetch(PDO::FETCH_ASSOC);
+        
+        $etat="En cours";
+
+        //Mise à jour maintenant de l'état de la tontine selon que tous les tours son payé ou pas
+        if($nombreP['tour_actuel']>$nombreP['nombre_participant']){
+            $etat="Terminée";
+            $u7=$pdo->prepare("UPDATE tontine SET etat_tontine=? WHERE code_tontine=?");
+            $u7->execute([$etat,$data['code_tontine']]);
+        }
         $pdo->commit();
 
-        send_response(true, "Retrait effectué avec succès !", ["montant" => $montant]);
+        //Récupérer les nouvelles valeurs de tour_actuel, le nombre de participant et l'était de la tontine
+        $u8 =$pdo->prepare("SELECT nombre_participant,tour_actuel,etat_tontine FROM tontine WHERE code_tontine=?");
+        $u8->execute([$data['code_tontine']]);
+        $newP=$u8->fetch(PDO::FETCH_ASSOC);
+
+        $message=$etat=="Terminée"? "Retrait de ".$montant." FCFA éffectué avec succès. La tontine est terminée":"Retrait éffectué avec succès. Au suivant !";
+
+        send_response(true, $message, [
+            'total_tour'=>$newP['nombre_participant'],
+            'tour_actuel'=>$newP['tour_actuel'],
+            'statut_tontine'=>$newP['etat_tontine']
+            ]
+        );
 
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
