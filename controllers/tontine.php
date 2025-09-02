@@ -250,102 +250,111 @@ function listeParticipants(){
 }
 
 function lister_tour(){
-
     $data=json_decode(file_get_contents('php://input'),true);
 
-    if(!isset($data['code_tontine']) || empty($data['code_tontine'])){
-        return "Le code tontine est manquant";
+    if(empty($data['code_tontine'])){
+        send_response(false,"Le code tontine est manquant");
     }
 
     $pdo=getDB();
 
-    // Récupérer la tontine et sa fréquence de paiement
-    $stmt=$pdo->prepare("
-        SELECT t.*, o.libelle_type_tontine, fp.libelle_frequence_paiement
-        FROM tontine AS t 
-        INNER JOIN type_tontine AS o 
-            ON o.id_type_tontine = t.id_type_tontine
-        INNER JOIN frequence_paiement AS fp
-            ON fp.id_frequence_paiement = t.id_frequence_paiement
-        WHERE code_tontine=?
-    ");
-    $stmt->execute([$data['code_tontine']]);
-    $type=$stmt->fetch(PDO::FETCH_ASSOC);
+    try {
+        $pdo->beginTransaction();
 
-    if(!$type){
-        return "Type non défini pour cette tontine";
-    }
-    
-    $nombreLimite = (int) $type['nombre_participant'];
+        // Récupérer infos tontine
+        $stmt=$pdo->prepare("
+            SELECT t.*, o.libelle_type_tontine, fp.libelle_frequence_paiement, t.etat_tontine
+            FROM tontine AS t 
+            INNER JOIN type_tontine AS o ON o.id_type_tontine = t.id_type_tontine
+            INNER JOIN frequence_paiement AS fp ON fp.id_frequence_paiement = t.id_frequence_paiement
+            WHERE code_tontine=?
+        ");
+        $stmt->execute([$data['code_tontine']]);
+        $type=$stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Nombre actuel de participants
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
-    $stmt->execute([$data['code_tontine']]);
-    $nombreParticipant = (int) $stmt->fetchColumn();
+        if(!$type){
+            throw new Exception("Type non défini pour cette tontine");
+        }
+        
+        $nombreLimite = (int) $type['nombre_participant'];
 
-    // Vérifier si les tours existent déjà
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM ordre_tirage WHERE code_tontine = ?");
-    $stmt->execute([$data['code_tontine']]);
-    $toursExistants = (int) $stmt->fetchColumn();
-    
-    if ($nombreParticipant == $nombreLimite && $toursExistants == 0) {
-        $stmt1=$pdo->prepare("SELECT code_participant FROM participer WHERE code_tontine=?");
-        $stmt1->execute([$data['code_tontine']]);
-        $participants=$stmt1->fetchAll(PDO::FETCH_ASSOC);
+        // Nombre actuel de participants
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
+        $stmt->execute([$data['code_tontine']]);
+        $nombreParticipant = (int) $stmt->fetchColumn();
 
-        $codes = array_column($participants, 'code_participant');
-
-        if ($type['libelle_type_tontine'] === 'Tirage') {
-            shuffle($codes);
+        if($nombreParticipant<$nombreLimite){
+            throw new Exception('Tontine incomplète');
         }
 
-        $startDate = new DateTime(); // date de début du premier tour
+        // Vérifier si des tours existent déjà
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM ordre_tirage WHERE code_tontine = ?");
+        $stmt->execute([$data['code_tontine']]);
+        $toursExistants = (int) $stmt->fetchColumn();
 
-        // Décalage du premier tour selon la fréquence de paiement
-        switch($type['libelle_frequence_paiement']){
-            case 'Mensuelle':
-                $startDate->modify('+1 month');
-                break;
-            case 'Hebdomadaire':
-                $startDate->modify('+1 week');
-                break;
-            case 'Trimestrielle':
-                $startDate->modify('+3 month');
-                break;
-        }
+        // Relancer si demandé et si la tontine est terminée
+        if(isset($data['relancer']) && $data['relancer']=="Oui" && $type['etat_tontine']=="Terminée"){
+            $pdo->prepare("
+                INSERT INTO ordre_tirage_archive (code_tontine, code_participant, ordre, statut, date_tour, archived_at)
+                SELECT code_tontine, code_participant, ordre, statut, date_tour, NOW()
+                FROM ordre_tirage
+                WHERE code_tontine=?
+            ")->execute([$data['code_tontine']]);
 
-        foreach ($codes as $i => $code) {
-            $ordre = $i + 1;
-
-            // Calcul de la date de chaque tour
-            $dateTour = clone $startDate;
+            $pdo->prepare("DELETE FROM ordre_tirage WHERE code_tontine=?")
+                ->execute([$data['code_tontine']]);
             
-            switch($type['libelle_frequence_paiement']){
-                case 'Mensuelle':
-                    $dateTour->modify('+'.($i).' month');
-                    break;
-                case 'Hebdomadaire':
-                    $dateTour->modify('+'.($i*7).' days');
-                    break;
-                case 'Trimestrielle':
-                    $dateTour->modify('+'.($i*3).' month');
-                    break;
+            //J'ai rajouté ça parce que j'ai remarqué que le tour_actuel n'était pas réinitilisé
+            $pdo->prepare("UPDATE tontine SET tour_actuel=1,etat_tontine=? WHERE code_tontine=?")
+                ->execute(["En cours",$data['code_tontine']]);
+
+            $toursExistants = 0; // On force régénération
+        }
+        
+        if ($nombreParticipant == $nombreLimite && $toursExistants == 0) {
+            $stmt1=$pdo->prepare("SELECT code_participant FROM participer WHERE code_tontine=?");
+            $stmt1->execute([$data['code_tontine']]);
+            $participants=$stmt1->fetchAll(PDO::FETCH_ASSOC);
+
+            $codes = array_column($participants, 'code_participant');
+
+            if ($type['libelle_type_tontine'] === 'Tirage') {
+                shuffle($codes);
             }
 
-            $stmt=$pdo->prepare("
-                INSERT INTO ordre_tirage(code_tontine, code_participant, ordre, statut, date_tour) 
-                VALUES(?,?,?,?,?)
-            ");
-            $stmt->execute([$data['code_tontine'], $code, $ordre, 0, $dateTour->format('Y-m-d H:i:s')]);
+            $startDate = new DateTime();
+
+            switch($type['libelle_frequence_paiement']){
+                case 'Mensuelle':     $startDate->modify('+1 month'); break;
+                case 'Hebdomadaire':  $startDate->modify('+1 week'); break;
+                case 'Trimestrielle': $startDate->modify('+3 month'); break;
+            }
+
+            foreach ($codes as $i => $code) {
+                $ordre = $i + 1;
+                $dateTour = clone $startDate;
+
+                switch($type['libelle_frequence_paiement']){
+                    case 'Mensuelle':     $dateTour->modify('+'.$i.' month'); break;
+                    case 'Hebdomadaire':  $dateTour->modify('+'.($i*7).' days'); break;
+                    case 'Trimestrielle': $dateTour->modify('+'.($i*3).' month'); break;
+                }
+
+                $stmt=$pdo->prepare("
+                    INSERT INTO ordre_tirage(code_tontine, code_participant, ordre, statut, date_tour) 
+                    VALUES(?,?,?,?,?)
+                ");
+                $stmt->execute([$data['code_tontine'], $code, $ordre, 0, $dateTour->format('Y-m-d H:i:s')]);
+            }
         }
 
-        return "Tours générés avec succès !";
+        $pdo->commit();
+        send_response(true,"Tours générés avec succès !");
+    } catch (\Throwable $th) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false,$th->getMessage());
     }
-
-    return null;
 }
-
-
 
 
 
