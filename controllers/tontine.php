@@ -228,7 +228,7 @@ function listeParticipants(){
         send_response(false,"Veuillez vérifier tous les champs");
     }
     $pdo=getDB();
-    $stmt=$pdo->prepare("SELECT p.nom_participant,p.prenoms_participant,p.email_participant,p.numro_mobile_money,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=?");
+    $stmt=$pdo->prepare("SELECT p.nom_participant,p.prenoms_participant,p.numro_mobile_money,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=?");
     $stmt->execute([$data['code_tontine']]);
     $listeParticipants=$stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -240,7 +240,6 @@ function listeParticipants(){
         $formated[]=[
             "nom" => $listeParticipant['nom_participant'],
             "prenoms" => $listeParticipant['prenoms_participant'],
-            "email" => $listeParticipant['email_participant'],
             "mobile" => $listeParticipant['numro_mobile_money'],
             "date_participation" => $listeParticipant['date_participation'],
             "type" => $listeParticipant['libelle_participant']

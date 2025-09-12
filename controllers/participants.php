@@ -14,20 +14,19 @@ function code_participant(){
 function register_participant() {
     $data = json_decode(file_get_contents("php://input"), true);
 
-    if (!isset($data['nom'], $data['prenom'], $data['email'], $data['password'], $data['mobile']) || empty($data['nom'])|| empty($data['prenom'])|| empty($data['email'])|| empty($data['password'])|| empty($data['mobile'])) {
+    if (!isset($data['nom'], $data['prenom'], $data['mobile']) || empty($data['nom'])|| empty($data['prenom'])|| empty($data['mobile'])) {
         send_response(false, "Veuillez vérifier tout les champs");
     }
 
     try {
         $pdo = getDB();
         $code_parti=code_participant();
-        $stmt = $pdo->prepare("INSERT INTO participants (code_participant, nom_participant, prenoms_participant, email_participant, mot_passe, numro_mobile_money) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],$data['email'],$data['password'],$data['mobile']]);
+        $stmt = $pdo->prepare("INSERT INTO participants (code_participant, nom_participant, prenoms_participant, mot_passe, numro_mobile_money) VALUES (?, ?, ?, ?, ?)");
+        $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],$data['password'],$data['mobile']]);
         send_response(true, "Participant inscrit avec succès",[
             "code_participant" => $code_parti,
             "nom"=> $data['nom'],
             "prenoms"=>$data['prenom'],
-            "email"=>$data['email'],
             "numero"=>$data['mobile'],
             "code_tontine"=>$data['code_tontine'] ?? "default code",
             "type"=>$data['type'] ?? "Participant"
@@ -41,15 +40,15 @@ function register_participant() {
 function login_participant() {
     $data = json_decode(file_get_contents("php://input"), true);
 
-    if (!isset($data['email_participant'],$data['password'])|| empty($data['email_participant']) || empty($data['password'])) {
+    if (!isset($data['numero_participant'],$data['password'])|| empty($data['numero_participant']) || empty($data['password'])) {
         send_response(false, "Veuillez vérifier tout les champs");
     }
 
     try {
         $pdo = getDB();
         $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant FROM participants p
-        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant WHERE email_participant=? AND mot_passe=?");
-        $stmt->execute([$data['email_participant'],$data['password']]);
+        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant WHERE numro_mobile_money=? AND mot_passe=?");
+        $stmt->execute([$data['numero_participant'],$data['password']]);
         $participant = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($participant) {
@@ -62,7 +61,6 @@ function login_participant() {
                     "code_participant" => $participant['code_participant'],
                     "nom" => $participant['nom_participant'],
                     "prenoms" => $participant['prenoms_participant'],
-                    "email" => $participant['email_participant'],
                     "type" => $participant['libelle_participant'],
                     "numero"=>$participant['numro_mobile_money'],
                     "code_tontine"=>$participations['code_tontine']
@@ -73,7 +71,6 @@ function login_participant() {
                     "code_participant" => $participant['code_participant'],
                     "nom" => $participant['nom_participant'],
                     "prenoms" => $participant['prenoms_participant'],
-                    "email" => $participant['email_participant'],
                     "type" => $participant['libelle_participant'],
                     "numero" => $participant['numro_mobile_money'],
                     "code_tontine" => ""
@@ -109,7 +106,6 @@ function get_profil() {
                 "code_participant" => $participant['code_participant'],
                 "nom" => $participant['nom_participant'],
                 "prenoms" => $participant['prenoms_participant'],
-                "email" => $participant['email_participant'],
                 "type" => $participant['libelle_participant'],
                 "numero_mobile_money" => $participant['numro_mobile_money']
             ]);
