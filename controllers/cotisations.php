@@ -124,7 +124,7 @@ function payer_cotisation(){
             throw new Exception("Cette tontine n'existe pas.");
         }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
             throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
-        }else if($data['montant']!=$tontine['montant_cotisation']){
+        }else if($data['montant']<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
         }
 
@@ -137,6 +137,9 @@ function payer_cotisation(){
             throw new Exception("Mode paiement non pris en charge!");
         }
 
+        $commission=$data['montant']-$tontine['montant_cotisation'];
+        $montantCotiser=$data['montant']-$commission;
+
         //Générer un code de cotisation
         $code_coti=code_cotisation();
 
@@ -145,7 +148,7 @@ function payer_cotisation(){
             $code_coti,
             $data['code_tontine'],
             $data['code_participant'],
-            $data['montant'],
+            $montantCotiser,
             date('Y-m-d H:i:s'),
             $idModepai['id_mode_paiement'],
             2
@@ -154,20 +157,54 @@ function payer_cotisation(){
         if($row==0){
            throw new Exception("Le paiement a échoué! Veuillez réessayer");
         }
-         //Mettre à jour le solde du wallet de la tontine
+
+        //Mettre à jour le solde de commissions selon le mode de paiement
+        switch ($data['libelle_mode_paiement']){
+            case 'Wave':
+                $colonne='Wave';
+                break;
+            case 'MTN Money':
+                $colonne='MTN Money';
+                break;
+            case 'Moov Money':
+                $colonne='MOOV Money';
+                break;
+            case 'Orange Money':
+                $colonne='Orange Money';
+                break;
+            default:
+                throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
+            break;
+        }
+        $stmt=$pdo->prepare("SELECT `$colonne` FROM commissions WHERE id_commissions=1");
+        $stmt->execute();
+        $ancienSoldeCommission=$stmt->fetch(PDO::FETCH_ASSOC);
+        if(!$ancienSoldeCommission){
+            throw new Exception("Une erreur s'est produite lors de la récupération de l'ancien solde de commission");
+        }
+        $stmtCommission1=$pdo->prepare("UPDATE commissions SET `$colonne`=?");
+        $stmtCommission1->execute([$ancienSoldeCommission[$colonne]+$commission]);
+        if(!$stmtCommission1){
+            throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
+        }
+
+        //Mettre à jour le solde du wallet de la tontine
         //1-Récupérer l'ancien solde
         $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
         $stmt->execute([$data['code_tontine']]);
         $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
         if(!$ancienSolde){
-            throw new Exception("Une erreur s'est produite lors de la mis à jour du solde de la tontine");
+            throw new Exception("Une erreur s'est produite lors de la récupération de l'ancien solde de la tontine");
         }
-        //2-Ajouter le montant de la pénalité
-        $nouveauSolde=$ancienSolde['solde_tontine']+$data['montant'];
+        //2-Mettre à jour le nouveau solde
+        $nouveauSolde=$ancienSolde['solde_tontine']+$montantCotiser;
         $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
         $maj->execute([$nouveauSolde,$data['code_tontine']]);
         if($maj->rowCount()==0){
             throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
+        }
+        if($maj->errorCode() !== "00000"){
+            throw new Exception("Erreur SQL lors de la mise à jour du solde tontine");
         }
 
         $pdo->commit();
