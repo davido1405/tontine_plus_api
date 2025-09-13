@@ -306,40 +306,51 @@ function lister_notification() {
         send_response(false, "Code participant requis.");
     }
 
-    // Gestion propre du filtre
-    $filtre = isset($data['filtre']) && !empty(trim($data['filtre'])) ? trim($data['filtre']) : "Tous";
+    // Valeur par défaut "Tous"
+    $filtre = isset($data['filtre']) && !empty(trim($data['filtre'])) 
+        ? trim($data['filtre']) 
+        : "Tous";
 
-    $pdo = getDB();
+    try {
+        $pdo = getDB();
 
-    $sql = "
-        SELECT n.id_notification, n.contenu_notification, n.date_envoie, 
-               s.statut_notification, t.type_notification
-        FROM notifications n
-        INNER JOIN statut_notification s ON n.id_statut_notification = s.id_statut_notification
-        INNER JOIN type_notification t ON n.id_type_notification = t.id_type_notification
-        WHERE n.code_participant = ?
-    ";
+        $sql = "
+            SELECT n.id_notification, n.contenu_notification, n.date_envoie, 
+                   s.statut_notification, t.type_notification
+            FROM notifications n
+            INNER JOIN statut_notification s 
+                ON n.id_statut_notification = s.id_statut_notification
+            INNER JOIN type_notification t 
+                ON n.id_type_notification = t.id_type_notification
+            WHERE n.code_participant = :code_participant
+        ";
 
-    $params = [$data['code_participant']];
+        $params = ["code_participant" => $data['code_participant']];
 
-    if ($filtre === "Lu" || $filtre === "Non lu") {
-        $sql .= " AND s.statut_notification = ?";
-        $params[] = $filtre;
-    }
+        // Si filtre spécifique
+        if (in_array($filtre, ["Lu", "Non lu"])) {
+            $sql .= " AND s.statut_notification = :filtre";
+            $params["filtre"] = $filtre;
+        }
 
-    $sql .= " ORDER BY n.date_envoie DESC";
+        $sql .= " ORDER BY n.date_envoie DESC";
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
 
-    $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    if ($notifs) {
-        send_response(true, "Notifications récupérées avec succès", $notifs);
-    } else {
-        send_response(false, "Aucune notification trouvée pour ce participant.");
+        if ($notifs && count($notifs) > 0) {
+            send_response(true, "Notifications récupérées avec succès", $notifs);
+        } else {
+            send_response(false, "Aucune notification trouvée pour ce participant.");
+        }
+
+    } catch (PDOException $e) {
+        send_response(false, "Erreur de base de données : " . $e->getMessage());
     }
 }
+
 
 
 
