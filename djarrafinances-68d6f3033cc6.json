@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "djarrafinances",
+  "private_key_id": "68d6f3033cc6ee4add50fd1d8c7f5af4f4cc8ad0",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC8WbwSJgcAqarl\npBZCNiSCJh+ArvskXP4LgUhceXlTaadoQQR0e9tZxLy1Hsj+fLRZzHtZWREegVic\nQNbyiBw/vFMqqq3AAimFPYO2yYpRpBWYCMRKeQ0qN3KFOWGlENKOkbI6HwiZcgRl\nqhOmkhydb+zPQh2hENMtP3RV3ZuMuD0309ra89AUxbk/sBsVaFQ0+iR6V95bFUaS\n0d7Vwzs8WtNFyhK0NKg9iAKPKuTFzqACpDp34UnpbQKuvCWXaMJACLDAezV/1B8A\ngxDuuvBZkXcmNqSeRpULcfUcTQO7X/nSJdpMCO+EarKL0S2bR5Nf1HyRyjCw/1OB\njqgv4PtNAgMBAAECggEAGmp9cZAqyEGDieyPAJ9GVIiTP4GLEIkISkXKB8ozpWq6\ng2km/k1GsNriWoakSujjhHqkzB2tRHmAm32Oh/pl99xqT6AbeUP0Xc8IU5EFmLiq\nHKYSHZ3HpmWbZqrrEnL/DObLN9KVaqvuiPGnCuQQJlaFwHW14RqSe5ScNNS9Vald\nt1kb5B8LEMo8i8opkvn4FFFze1+2E1jbf9nP+U1vz9GwII4FdRGGlj08s+yi/ylM\nf04HxyD4yd5rVST1AcoWW3TIkq+g/Omq8W74c0GLIOUa/hY9c/KvzPMWnB2zUopM\nrVtQ9aZ2jmyrESZBGjUPJ6/Ql3Fyx00CBJZpBpeTwwKBgQDeRDn5aXnJiiHcAmcF\nb5ZBYAJBTiwl5tfQDou83yn2oBa3FexElGz3CF3OtMrUznUMWe/rS2k24jlanTox\nW1nLntejwcc71xFG7NHJD14+492tPHP99K3LG4wijvPJ2JA0Ndd4E8IlMlpv0Yob\nTfh2jsHoRrckpL1vZ2NpjBPWRwKBgQDY78MtoCFapRAkihEwk5qz3PX/wN3DwqGC\nzraTSgRz2pky69WPieHMiW94vXERbx5RUCYRVpaEx4bYI4wr47zaJmOWSpRmfTJP\noMc+wjcf0wb4qDRiAKTQWmf8fcVOi5qqlwdIeMUCTkwZvB7uFO61E2N7JlnFRPvL\nBN1BpdTnywKBgGmMmMNaVV1h3WZvNaEdNothHnEIwGpXT1EcNzu/9luJ9n+HR6Xh\nnkVJkdKhhFi+mlL9OrPQIezQTVA8re/WY7QQgHLhiM1f+nJl79G9HJJc/15PAP4u\nfYGgWVHn9Nl7oC9LCkGZkG69lLjZFu6UflM+w9KcEkiyess2m7z5qkntAoGAZHuK\nGFQXnvjd5U7eb3WvLqimeXRIRCiezwwYnVinf1I9q8x4+yeOo0L1kyOMf9rMXDWX\nrGhDB/Wzi+HLR3kRPKqTbkXVPzO2XhPGtlcXWXJRxFOFD+/kZ224xMcs4Rjg5ytV\ngEgQWOUTcsgkO3sOpmj4p044PpuZVYxHP+UkHMkCgYEAn0Y5H8dCHZzECgEGBNzQ\n+Pxni9WdCXQPyWmbABhPL+jpM3xrc2GXiWPVQX1Pma0qH3C/QQJ3FZtPEDlVi6PT\nQzxXYNK24q0tJgMMTafMvgfPUcRPFUBI5JGXqItrS9C5+a1uLs6nQvvTCir9agoM\nY2KETYPTV96Q/55iQI/7BH0=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@djarrafinances.iam.gserviceaccount.com",
+  "client_id": "110179435329037911784",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40djarrafinances.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

@@ -1,5 +1,4 @@
 <?php
-
 /**
  * Envoie une réponse formatée en JSON
  * @param bool $success - indique si l'opération a réussi

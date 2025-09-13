@@ -1,7 +1,8 @@
 <?php
 require_once (__DIR__ . '/../controllers/tontine.php');
 require_once (__DIR__ . '/../controllers/type_tontine.php');
-
+require_once __DIR__ . '/../vendor/autoload.php';
+use Firebase\JWT\JWT;
 if(isset($_GET['action'])){
     $action=$_GET['action'];
 

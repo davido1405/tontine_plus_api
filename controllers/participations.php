@@ -2,6 +2,9 @@
 include_once __DIR__ . '/../config/db.php';
 include_once __DIR__ . '/../helpers/responses.php';
 include_once __DIR__ . '/../controllers/tontine.php';
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use Firebase\JWT\JWT;
 
 
 function ajouter_participation() {

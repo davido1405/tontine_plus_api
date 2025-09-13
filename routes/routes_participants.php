@@ -1,5 +1,7 @@
 <?php
 require_once (__DIR__ . '/../controllers/participants.php');
+require_once __DIR__ . '/../vendor/autoload.php';
+use Firebase\JWT\JWT;
 
 if(isset($_GET['action'])){
     $action=$_GET['action'];
@@ -25,6 +27,9 @@ if(isset($_GET['action'])){
             break;
         case 'verifierTour':
             recupere_tour_actuel();
+            break;
+        case 'recuperer_fcm_token':
+            saveFcmToken();
             break;
         default:
             send_response(false,"Action incconue pour participant");

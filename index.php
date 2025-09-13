@@ -1,5 +1,8 @@
 <?php
 // Fichier index.php à la racine de l’API
+require_once __DIR__ . '/vendor/autoload.php';
+use Firebase\JWT\JWT;
+
 
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");

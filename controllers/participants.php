@@ -2,6 +2,9 @@
 include_once __DIR__ . '/../config/db.php';
 
 include_once __DIR__ . '/../helpers/responses.php';
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use Firebase\JWT\JWT;
 
 
 function code_participant(){
@@ -34,6 +37,13 @@ function register_participant() {
     } catch (PDOException $e) {
         send_response(false, "Erreur : " . $e->getMessage());
     }
+}
+
+function saveFcmToken() {
+    $data = json_decode(file_get_contents("php://input"), true);
+    $pdo = getDB(); // ta connexion PDO
+    $stmt = $pdo->prepare("UPDATE participants SET fcm_token=? WHERE code_participant=?");
+    $stmt->execute([ $data['fcm_token'],$data['code_participant']]);
 }
 
 

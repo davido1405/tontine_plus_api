@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/../controllers/cotisations.php';
+require_once __DIR__ . '/../vendor/autoload.php';
 
+use Firebase\JWT\JWT;
 
 if(isset($_GET['action'])){
     $action=$_GET['action'];

@@ -2,6 +2,9 @@
 include_once __DIR__ . '/../config/db.php';
 
 include_once __DIR__ . '/../helpers/responses.php';
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use Firebase\JWT\JWT;
 
 
 
@@ -112,8 +115,100 @@ function envoyer_notification_penlaite(){
     }
 }
 
-//Envoyer des notifications générales
+function sendPushNotification($token, $title, $body) {
+    $logFile = __DIR__ . '/fcm_debug.log';
 
+    // Chemin vers le fichier JSON du compte de service
+    $serviceAccountPath = __DIR__ . '/djarrafinances-68d6f3033cc6.json';
+    if (!file_exists($serviceAccountPath)) {
+        file_put_contents($logFile, "Fichier service account non trouvé: $serviceAccountPath\n", FILE_APPEND);
+        return false;
+    }
+
+    $serviceAccount = json_decode(file_get_contents($serviceAccountPath), true);
+    if (!$serviceAccount) {
+        file_put_contents($logFile, "Impossible de lire le fichier JSON du service account\n", FILE_APPEND);
+        return false;
+    }
+
+    try {
+        // Création du JWT
+        $now = time();
+        $claim = [
+            'iss' => $serviceAccount['client_email'],
+            'scope' => 'https://www.googleapis.com/auth/firebase.messaging',
+            'aud' => $serviceAccount['token_uri'],
+            'iat' => $now,
+            'exp' => $now + 3600
+        ];
+
+        require_once __DIR__ . '/vendor/autoload.php'; // Assure-toi que Composer est installé
+        $jwt = \Firebase\JWT\JWT::encode($claim, $serviceAccount['private_key'], 'RS256', $serviceAccount['private_key_id']);
+
+        // Récupérer access_token
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $serviceAccount['token_uri']);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/x-www-form-urlencoded']);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+            'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion' => $jwt
+        ]));
+        $response = curl_exec($ch);
+        if ($response === false) {
+            throw new Exception("Erreur CURL: " . curl_error($ch));
+        }
+        curl_close($ch);
+
+        $data = json_decode($response, true);
+        if (!isset($data['access_token'])) {
+            throw new Exception("Access token non reçu. Réponse : " . $response);
+        }
+        $accessToken = $data['access_token'];
+
+        // Préparer le message
+        $message = [
+            'message' => [
+                'token' => $token,
+                'notification' => [
+                    'title' => $title,
+                    'body' => $body
+                ]
+            ]
+        ];
+
+        // Envoi du push
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, 'https://fcm.googleapis.com/v1/projects/gerematontine/messages:send');
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Authorization: Bearer ' . $accessToken,
+            'Content-Type: application/json'
+        ]);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($message));
+        $result = curl_exec($ch);
+        if ($result === false) {
+            throw new Exception("Erreur CURL lors de l'envoi du push: " . curl_error($ch));
+        }
+        curl_close($ch);
+
+        // Log pour debug
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Push envoyé: $title -> $token\n", FILE_APPEND);
+
+        return $result;
+
+    } catch (Exception $e) {
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Erreur: " . $e->getMessage() . "\n", FILE_APPEND);
+        return false;
+    }
+}
+
+
+
+
+//Envoyer notifications push et enregistrer dans la BDD
 function envoyer_rappel_cotisation(){
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -132,9 +227,14 @@ function envoyer_rappel_cotisation(){
         send_response(false, "Type de notification invalide.");
     }
 
-    // Récupérer tous les participants à une tontine
-    $stmtParticipe = $pdo->prepare("SELECT p.*,t.montant_cotisation FROM participer p
-    INNER JOIN tontine t ON p.code_tontine=t.code_tontine WHERE p.code_tontine = ?");
+    // Récupérer tous les participants et leur FCM token
+    $stmtParticipe = $pdo->prepare("
+        SELECT p.*, t.montant_cotisation, w.fcm_token 
+        FROM participer p
+        INNER JOIN tontine t ON p.code_tontine=t.code_tontine
+        INNER JOIN participants w ON w.code_participant = p.code_participant
+        WHERE p.code_tontine = ?
+    ");
     $stmtParticipe->execute([$data['code_tontine']]);
     $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
 
@@ -142,13 +242,13 @@ function envoyer_rappel_cotisation(){
         send_response(false, "Cette tontine n'a aucun participant pour l'instant");
     }
 
-
     foreach($participants as $participant){
+        $contenu = "Pensez à payer votre cotisation de ".$participant['montant_cotisation'].". Merci !";
 
-        $contenu="Pensez à payer votre cotisation ".$participant['montant_cotisation'].". Merci !";
+        // Enregistrement dans la BDD
         $stmt = $pdo->prepare("
-        INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
-        VALUES (?, ?, ?, ?, ?)
+            INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
+            VALUES (?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $contenu,
@@ -157,13 +257,14 @@ function envoyer_rappel_cotisation(){
             $type['id_type_notification'],
             $data['code_tontine']
         ]);
+
+        // Envoi du push si FCM token disponible
+        if (!empty($participant['fcm_token'])) {
+            sendPushNotification($participant['fcm_token'], "Rappel cotisation", $contenu);
+        }
     }
 
-    if ($stmt->rowCount() > 0) {
-        send_response(true, "Rappel envoyée avec succès.");
-    } else {
-        send_response(false, "Échec de l'envoi des rappels.");
-    }
+    send_response(true, "Rappel envoyée avec succès.");
 }
 
 
