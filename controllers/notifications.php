@@ -175,9 +175,13 @@ function sendPushNotification($token, $title, $body) {
                 'notification' => [
                     'title' => $title,
                     'body' => $body
+                ],
+                'android' => [
+                    'priority' => 'high'
                 ]
             ]
         ];
+
 
         // Envoi du push
         $ch = curl_init();
