@@ -169,18 +169,25 @@ function sendPushNotification($token, $title, $body) {
         $accessToken = $data['access_token'];
 
         // Préparer le message
+        // Préparer le message
         $message = [
             'message' => [
-                'token' => $token,
+                'token' => $token, // le token FCM du device
                 'notification' => [
                     'title' => $title,
-                    'body' => $body
+                    'body' => $body,
                 ],
                 'android' => [
                     'priority' => 'high'
-                ]
-            ]
+                ],
+                'apns' => [
+                    'headers' => [
+                        'apns-priority' => '10' // 10 = immédiat sur iOS
+                    ]
+                ],
+            ],
         ];
+
 
 
         // Envoi du push
