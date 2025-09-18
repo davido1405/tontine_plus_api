@@ -1,8 +1,12 @@
 <?php
 include_once __DIR__ . '/../config/db.php';
-
 include_once __DIR__ . '/../helpers/responses.php';
+include_once  'notifications.php';
 require_once __DIR__ . '/../vendor/autoload.php';
+
+require_once __DIR__ . '/../manageJWT.php';
+
+
 
 use Firebase\JWT\JWT;
 
@@ -105,9 +109,48 @@ function ajouter_penalites(){
 
 }
 
+//Notifications de paiement
+function envoyer_notification_paiement($code_tontine,$code_participant){
+
+    $pdo = getDB();
+
+    // Récupérer le participant qui a payé
+    $stmtParticipe = $pdo->prepare("
+        SELECT p.*, w.fcm_token,t.montant_cotisation 
+        FROM participer p
+        INNER JOIN tontine t ON p.code_tontine=t.code_tontine
+        INNER JOIN participants w ON w.code_participant = p.code_participant
+        WHERE p.code_tontine = ?
+    ");
+    $stmtParticipe->execute($code_tontine);
+    $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!$participants) {
+        send_response(false, "Une erreur s'est produite, veuillez en informer le service technique");
+    }
+    foreach($participants as $participant){
+        if($participant['code_participant']==$code_participant){
+            $nomParicipant=$participant['nom']." ".$participant['prenom'];
+        }
+    }
+
+    foreach($participants as $participant){
+        if($participant['code_participant']!=$code_participant){
+            $token=$participant['fcm_token'];
+            $contenu=$nomParicipant." vient de payer sa cotisation(".$participant['montant_cotisation']." FCFA). A qui le tour ?";
+            sendPushNotification($token, "Paiement de cotisation", $contenu);
+        }
+    }
+    
+}
+
 
 //Fonction pour payer les cotisations
 function payer_cotisation(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_tontine'],$data['code_participant'],$data['montant'],$data['libelle_mode_paiement'])|| empty($data['code_tontine'])||empty($data['code_participant'])||empty($data['montant'])||empty($data['libelle_mode_paiement'])){
@@ -161,56 +204,31 @@ function payer_cotisation(){
            throw new Exception("Le paiement a échoué! Veuillez réessayer");
         }
 
-        //Mettre à jour le solde de commissions selon le mode de paiement
-        switch ($data['libelle_mode_paiement']){
-            case 'Wave':
-                $colonne='Wave';
-                break;
-            case 'MTN Money':
-                $colonne='MTN Money';
-                break;
-            case 'Moov Money':
-                $colonne='MOOV Money';
-                break;
-            case 'Orange Money':
-                $colonne='Orange Money';
-                break;
-            default:
-                throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
-            break;
-        }
-        $stmt=$pdo->prepare("SELECT `$colonne` FROM commissions WHERE id_commissions=1");
-        $stmt->execute();
-        $ancienSoldeCommission=$stmt->fetch(PDO::FETCH_ASSOC);
-        if(!$ancienSoldeCommission){
-            throw new Exception("Une erreur s'est produite lors de la récupération de l'ancien solde de commission");
-        }
-        $stmtCommission1=$pdo->prepare("UPDATE commissions SET `$colonne`=?");
-        $stmtCommission1->execute([$ancienSoldeCommission[$colonne]+$commission]);
-        if(!$stmtCommission1){
+        //Mettre à jour le e de commissions selon le mode de paiement
+        
+        $stmt6=$pdo->prepare("INSERT INTO commissions (operateur,montant_commission,date_paiement) VALUES(?,?,?)");
+        $stmt6->execute([$data['libelle_mode_paiement'],$commission,date('Y-m-d H:i:s')]);
+        
+        if(!$stmt6){
             throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
         }
 
         //Mettre à jour le solde du wallet de la tontine
-        //1-Récupérer l'ancien solde
-        $stmt=$pdo->prepare("SELECT solde_tontine FROM wallet_tontine WHERE code_tontine=?");
-        $stmt->execute([$data['code_tontine']]);
-        $ancienSolde=$stmt->fetch(PDO::FETCH_ASSOC);
-        if(!$ancienSolde){
-            throw new Exception("Une erreur s'est produite lors de la récupération de l'ancien solde de la tontine");
-        }
-        //2-Mettre à jour le nouveau solde
-        $nouveauSolde=$ancienSolde['solde_tontine']+$montantCotiser;
-        $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
-        $maj->execute([$nouveauSolde,$data['code_tontine']]);
+        
+        $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine = solde_tontine + ? WHERE code_tontine = ?");
+        $maj->execute([$montantCotiser,$data['code_tontine']]);
         if($maj->rowCount()==0){
             throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
         }
         if($maj->errorCode() !== "00000"){
             throw new Exception("Erreur SQL lors de la mise à jour du solde tontine");
         }
-
+        //Envoie du push pour notifier le paiement aux autres utilisateurs
+        envoyer_notification_paiement($data['code_tontine'],$data['code_participant']);
+        
+        
         $pdo->commit();
+
         send_response(true, "Paiement éffectué avec succès !");
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -220,6 +238,10 @@ function payer_cotisation(){
 
 
 function payer_penalite() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (
@@ -309,6 +331,12 @@ function payer_penalite() {
 
 
 function voir_mes_cotisations(){
+
+    
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_participant'],$data['code_tontine'])){
@@ -341,6 +369,11 @@ function voir_mes_cotisations(){
 
 
 function voir_mes_penalites(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_participant'],$data['code_tontine'])){
@@ -372,6 +405,11 @@ function voir_mes_penalites(){
 }
 
 function total_cotisation(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_participant'],$data['code_tontine'])){
@@ -390,6 +428,10 @@ function total_cotisation(){
 }
 
 function total_penalite(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_participant'],$data['code_tontine'])||empty($data['code_participant'])||empty($data['code_tontine'])){

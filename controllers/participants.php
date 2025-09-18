@@ -4,6 +4,8 @@ include_once __DIR__ . '/../config/db.php';
 include_once __DIR__ . '/../helpers/responses.php';
 require_once __DIR__ . '/../vendor/autoload.php';
 
+require_once __DIR__ . '/../manageJWT.php';
+
 use Firebase\JWT\JWT;
 
 
@@ -17,22 +19,34 @@ function code_participant(){
 function register_participant() {
     $data = json_decode(file_get_contents("php://input"), true);
 
-    if (!isset($data['nom'], $data['prenom'], $data['mobile']) || empty($data['nom'])|| empty($data['prenom'])|| empty($data['mobile'])) {
+    if (!isset($data['nom'], $data['prenom'],$data['password'], $data['mobile']) || empty($data['nom'])|| empty($data['prenom'])||empty($data['password']) ||empty($data['mobile'])) {
         send_response(false, "Veuillez vérifier tout les champs");
     }
 
     try {
         $pdo = getDB();
         $code_parti=code_participant();
+
+        //D'abord vérifier qu'un compte n'existe pas déjà pour le numéro renseigné
+        $verif=$pdo->prepare("SELECT * FROM participants WHERE numro_mobile_money=?");
+        $verif->execute([$data['mobile']]);
+        $dejaCompte=$verif->fetch(PDO::FETCH_ASSOC);
+
+        if($dejaCompte){
+            send_response(false,"Vous avez déjà un compte veuillez vous connecter ou réinitialisez votre code Djarra Finances. Merci");
+        }
+
         $stmt = $pdo->prepare("INSERT INTO participants (code_participant, nom_participant, prenoms_participant, mot_passe, numro_mobile_money) VALUES (?, ?, ?, ?, ?)");
         $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],$data['password'],$data['mobile']]);
+        $token=generer_token_utilisateur($code_parti,$data['mobile']);
         send_response(true, "Participant inscrit avec succès",[
             "code_participant" => $code_parti,
             "nom"=> $data['nom'],
             "prenoms"=>$data['prenom'],
             "numero"=>$data['mobile'],
             "code_tontine"=>$data['code_tontine'] ?? "default code",
-            "type"=>$data['type'] ?? "Participant"
+            "type"=>$data['type'] ?? "Participant",
+            "jwt_token"=>$token
         ]);
     } catch (PDOException $e) {
         send_response(false, "Erreur : " . $e->getMessage());
@@ -41,13 +55,14 @@ function register_participant() {
 
 function saveFcmToken() {
     $data = json_decode(file_get_contents("php://input"), true);
-    $pdo = getDB(); // ta connexion PDO
+    $pdo = getDB(); //Connexion PDO
     $stmt = $pdo->prepare("UPDATE participants SET fcm_token=? WHERE code_participant=?");
     $stmt->execute([ $data['fcm_token'],$data['code_participant']]);
 }
 
 
 function login_participant() {
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['numero_participant'],$data['password'])|| empty($data['numero_participant']) || empty($data['password'])) {
@@ -66,6 +81,8 @@ function login_participant() {
             $stmt2->execute([$participant['code_participant']]);
             $participations=$stmt2->fetch(PDO::FETCH_ASSOC);
             if($participations){
+                //Générer un nouveau token
+                $token=generer_token_utilisateur($participant['code_participant'],$participant['numro_mobile_money']);
                 // Tu peux retourner plus de données ici si tu veux (nom, type, etc.)
                 send_response(true,"Connexion réussie",[
                     "code_participant" => $participant['code_participant'],
@@ -73,9 +90,13 @@ function login_participant() {
                     "prenoms" => $participant['prenoms_participant'],
                     "type" => $participant['libelle_participant'],
                     "numero"=>$participant['numro_mobile_money'],
-                    "code_tontine"=>$participations['code_tontine']
+                    "indice_solvabilite"=>$participant['indice_solvabilite'],
+                    "code_tontine"=>$participations['code_tontine'],
+                    "jwt_token"=>$token
                 ]);
             }else {
+                //Générer un nouveau token
+                $token=generer_token_utilisateur($participant['code_participant'],$participant['numro_mobile_money']);
                 // Retourne quand même les infos sans tontine
                 send_response(true,"Connexion réussie (pas encore de tontine)",[
                     "code_participant" => $participant['code_participant'],
@@ -83,7 +104,9 @@ function login_participant() {
                     "prenoms" => $participant['prenoms_participant'],
                     "type" => $participant['libelle_participant'],
                     "numero" => $participant['numro_mobile_money'],
-                    "code_tontine" => ""
+                    "indice_solvabilite"=>$participant['indice_solvabilite'],
+                    "code_tontine" => "",
+                    "jwt_token"=>$token
                 ]);
             }
         } else {
@@ -97,6 +120,11 @@ function login_participant() {
 
 
 function get_profil() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+    
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_participant']) || empty($data['code_participant'])) {
@@ -117,7 +145,8 @@ function get_profil() {
                 "nom" => $participant['nom_participant'],
                 "prenoms" => $participant['prenoms_participant'],
                 "type" => $participant['libelle_participant'],
-                "numero_mobile_money" => $participant['numro_mobile_money']
+                "numero_mobile_money" => $participant['numro_mobile_money'],
+                "indice_solvabilite"=>$participant['indice_solvabilite'],
             ]);
         } else {
             send_response(false,"Participant introuvable.");

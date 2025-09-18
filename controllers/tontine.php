@@ -2,7 +2,10 @@
 include_once __DIR__ . '/../config/db.php';
 
 include_once __DIR__ . '/../helpers/responses.php';
+
 require_once __DIR__ . '/../vendor/autoload.php';
+
+require_once __DIR__ . '/../manageJWT.php';
 
 use Firebase\JWT\JWT;
 
@@ -28,9 +31,13 @@ function code_wallet(){
 
 //Créer une tontine
 function create_tontine(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents("php://input"), true);
 
-    if (!isset($data['code_participant'],$data['nom_tontine'], $data['type_tontine'], $data['montant_cotisation'], $data['nombre_participant'], $data['frequence'],$data['frequence_paiement'],$data['montant_penalite'])) {
+    if (!isset($data['code_participant'],$data['nom_tontine'], $data['type_tontine'], $data['montant_cotisation'], $data['nombre_participant'], $data['frequence'],$data['frequence_paiement'])) {
         send_response(false, "Champs obligatoires manquants.");
     }
     
@@ -78,7 +85,7 @@ function create_tontine(){
         }
 
         //Ajout de la tontine
-        $sql=$pdo->prepare("INSERT INTO tontine(code_tontine,nom_tontine,montant_cotisation,nombre_participant,id_frequence,id_frequence_paiement,id_type_tontine,date_creation,montant_penalite) VALUES(?,?,?,?,?,?,?,?,?)");
+        $sql=$pdo->prepare("INSERT INTO tontine(code_tontine,nom_tontine,montant_cotisation,nombre_participant,id_frequence,id_frequence_paiement,id_type_tontine,date_creation) VALUES(?,?,?,?,?,?,?,?)");
 
         //Definir la date
         $date=date("Y-m-d H:i:s");
@@ -95,7 +102,6 @@ function create_tontine(){
                 $frequence_paiement['id_frequence_paiement'],
                 $type['id_type_tontine'],
                 $date,
-                $data['montant_penalite'] ?? 1000
             ]
         );
 
@@ -134,6 +140,11 @@ function create_tontine(){
 //Details d'une tontine
 
 function get_tontine_details() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_tontine']) || empty($data['code_tontine'])) {
@@ -161,13 +172,13 @@ function get_tontine_details() {
                 "code_tontine" => $tontine['code_tontine'],
                 "nom" => $tontine['nom_tontine'],
                 "montant" => $tontine['montant_cotisation'],
-                "nombre participant" => $tontine['nombre_participant'],
+                "nombre_participant" => $tontine['nombre_participant'],
                 "frequence" => $tontine['libelle_frequence'],
                 "frequence_paiement"=>$tontine['libelle_frequence_paiement'],
                 "statut" => $tontine['statut'],
                 "type" => $tontine['libelle_type_tontine'],
                 "etat_tontine"=>$tontine['etat_tontine'],
-                "date creation" => $tontine['date_creation'],
+                "date_creation" => $tontine['date_creation'],
                 "code_wallet" =>$tontine['code_wallet']
             ]);
         } else {
@@ -226,12 +237,17 @@ function toutes_tontines() {
 //Ppour charger les participants d'une tontine en particulier
 
 function listeParticipants(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents("php://input"),true);
     if(!isset($data['code_tontine'])||empty($data['code_tontine'])){
         send_response(false,"Veuillez vérifier tous les champs");
     }
     $pdo=getDB();
-    $stmt=$pdo->prepare("SELECT p.nom_participant,p.prenoms_participant,p.numro_mobile_money,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=?");
+    $stmt=$pdo->prepare("SELECT p.code_participant, p.nom_participant,p.prenoms_participant,p.numro_mobile_money,p.indice_solvabilite,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=? ORDER BY p.indice_solvabilite ASC");
     $stmt->execute([$data['code_tontine']]);
     $listeParticipants=$stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -241,17 +257,24 @@ function listeParticipants(){
     $formated=[];
     foreach($listeParticipants as $listeParticipant){
         $formated[]=[
+            "code_participant"=>$listeParticipant['code_participant'],
             "nom" => $listeParticipant['nom_participant'],
             "prenoms" => $listeParticipant['prenoms_participant'],
             "mobile" => $listeParticipant['numro_mobile_money'],
             "date_participation" => $listeParticipant['date_participation'],
-            "type" => $listeParticipant['libelle_participant']
+            "type" => $listeParticipant['libelle_participant'],
+            "points_confiance"=>$listeParticipant['indice_solvabilite']
         ];
     }
     send_response(true,"Liste des participants de la tontine",$formated);
 }
 
 function lister_tour(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(empty($data['code_tontine'])){
@@ -362,6 +385,11 @@ function lister_tour(){
 
 //Récupérer les infos wallet_tontine
 function wallet_tontine_infos(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents("php://input"),true);
     if(!isset($data['code_tontine']) || empty($data['code_tontine'])){
         send_response(false,"Veuillez remplir tous les champs svp !");
@@ -385,6 +413,11 @@ function wallet_tontine_infos(){
 
 
 function transactions(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data=json_decode(file_get_contents("php://input"),true);
 
     if(!isset($data['code_tontine']) || empty($data['code_tontine'])){
@@ -401,21 +434,6 @@ function transactions(){
             m.libelle_mode_paiement AS mode_paiement,
             s.libelle_statut_paiement AS statut
         FROM cotisations c INNER JOIN participants as p ON p.code_participant=c.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=c.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=c.id_statut_paiement WHERE c.code_tontine=?
-
-        UNION ALL
-
-        SELECT
-            p.nom_participant,
-            p.prenoms_participant,
-            d.montant,
-            d.date_penalite AS date_transaction,
-            'Penalite' AS type_transaction,
-            m.libelle_mode_paiement AS mode_paiement,
-            CASE 
-            	WHEN statut='Payée' THEN 'Effectué'
-            	ELSE 'En attente'
-                END AS statut
-        FROM penalites d INNER JOIN participants as p ON p.code_participant=d.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=d.id_mode_paiement WHERE d.code_tontine=?
 
         UNION ALL
 
@@ -454,6 +472,11 @@ function transactions(){
 
 //Récupérer les ordre de tour
 function ordrePaiement() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_tontine']) || empty($data['code_tontine'])) {
@@ -503,6 +526,11 @@ function ordrePaiement() {
 
 //Faire un retrait
 function retrait() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data = json_decode(file_get_contents("php://input"), true);
     if (empty($data['code_tontine']) || empty($data['code_participant'])) {
         send_response(false, "Veuillez remplir tous les champs !");

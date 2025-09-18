@@ -1,13 +1,17 @@
 <?php
 include_once __DIR__ . '/../config/db.php';
 include_once __DIR__ . '/../helpers/responses.php';
-include_once __DIR__ . '/../controllers/tontine.php';
+include_once 'tontine.php';
 require_once __DIR__ . '/../vendor/autoload.php';
-
+require_once __DIR__ . '/../manageJWT.php';
 use Firebase\JWT\JWT;
 
 
 function ajouter_participation() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+    
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (empty($data['code_participant']) || empty($data['code_tontine'])) {

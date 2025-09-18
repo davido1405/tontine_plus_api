@@ -5,27 +5,24 @@ include_once __DIR__ . '/../helpers/responses.php';
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
+require_once __DIR__ . '/../manageJWT.php';
+
 use Firebase\JWT\JWT;
 
 
 
-function envoyer_notification_generale(){
+function envoyer_notification_personnalise(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents('php://input'), true);
 
-    if (!isset($data['code_tontine'], $data['type_notification'], $data['contenu_notification']) || empty($data['code_tontine'])||empty($data['type_notification']) ||empty($data['contenu_notification'])) {
+    if (!isset($data['code_tontine'],$data['code_participant'], $data['type_notification'], $data['contenu_notification']) || empty($data['code_tontine'])||empty($data['type_notification']) ||empty($data['contenu_notification']) || empty($data['code_participant'])) {
         send_response(false, "Champs obligatoires manquants.");
     }
 
     $pdo = getDB();
-
-    // Récupérer tous les participants de la tontine
-    $stmt = $pdo->prepare("SELECT code_participant FROM participer WHERE code_tontine = ?");
-    $stmt->execute([$data['code_tontine']]);
-    $participants = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    if (!$participants) {
-        send_response(false, "Aucun participant trouvé pour cette tontine.");
-    }
 
     // Récupérer l'ID du type de notification
     $stmtType = $pdo->prepare("SELECT id_type_notification FROM type_notification WHERE type_notification = ?");
@@ -36,34 +33,56 @@ function envoyer_notification_generale(){
         send_response(false, "Type de notification invalide.");
     }
 
-    $date_envoie = date("Y-m-d H:i:s");
-    $successCount = 0;
+    // Récupérer le participant ciblé et son FCM token
+    $stmtParticipe = $pdo->prepare("
+        SELECT p.*, t.montant_cotisation, w.fcm_token 
+        FROM participer p
+        INNER JOIN tontine t ON p.code_tontine=t.code_tontine
+        INNER JOIN participants w ON w.code_participant = p.code_participant
+        WHERE p.code_tontine = ? AND p.code_participant=?
+    ");
+    $stmtParticipe->execute([$data['code_tontine'],$data['code_participant']]);
+    $participant = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
 
-    // Envoyer une notification à chaque participant
-    foreach ($participants as $participant) {
-        $stmtNotif = $pdo->prepare("
+    if (!$participant) {
+        send_response(false, "Une erreur s'est produite, veuillez en informer le service technique");
+    }
+
+    $date_envoie = date("Y-m-d H:i:s");
+
+    // Enregistrement de la notification au participant ciblé
+        $stmt = $pdo->prepare("
             INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
             VALUES (?, ?, ?, ?, ?)
         ");
-        $stmtNotif->execute([
-            $data['contenu_notification'],
+        $stmt->execute([
+            $contenu,
             $participant['code_participant'],
-            $date_envoie,
+            date("Y-m-d H:i:s"),
             $type['id_type_notification'],
             $data['code_tontine']
         ]);
 
-        if ($stmtNotif->rowCount() > 0) {
-            $successCount++;
+        // Envoi du push si FCM token disponible
+        if (!empty($participant['fcm_token'])) {
+            $result=sendPushNotification($participant['fcm_token'], "Information", $contenu);
+            if($result){
+                send_response(true, "Notification envoyées avec succès.");
+            }else{
+                send_response(false, "Notification non envoyées.");
+            }
         }
-    }
-
-    send_response(true, "$successCount notifications envoyées avec succès.");
+    
 }
 
 
 
 function envoyer_notification_penlaite(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (!isset($data['code_tontine'], $data['type_notification'])) {
@@ -169,7 +188,6 @@ function sendPushNotification($token, $title, $body) {
         $accessToken = $data['access_token'];
 
         // Préparer le message
-        // Préparer le message
         $message = [
             'message' => [
                 'token' => $token, // le token FCM du device
@@ -222,6 +240,10 @@ function sendPushNotification($token, $title, $body) {
 
 //Envoyer notifications push et enregistrer dans la BDD
 function envoyer_rappel_cotisation(){
+
+    // Vérifier le token utilisateur
+    $decoder = verifier_token();
+
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (!isset($data['code_tontine'], $data['type_notification'])) {
@@ -229,6 +251,18 @@ function envoyer_rappel_cotisation(){
     }
 
     $pdo = getDB();
+
+    // Vérifier que la tontine est en cours et avec des tours générés
+    $stmtTontine = $pdo->prepare("SELECT statut, etat_tontine, montant_cotisation FROM tontine WHERE code_tontine=?");
+    $stmtTontine->execute([$data['code_tontine']]);
+    $tontine = $stmtTontine->fetch(PDO::FETCH_ASSOC);
+
+    if (!$tontine) {
+        send_response(false, "Tontine introuvable");
+    }
+    if ($tontine['statut'] != "Pleine" || $tontine['etat_tontine'] != "En cours") {
+        send_response(false, "Les rappels ne sont envoyés que lorsque la tontine est en cours.");
+    }
 
     // Récupérer l'ID du type de notification
     $stmtType = $pdo->prepare("SELECT id_type_notification FROM type_notification WHERE type_notification = ?");
@@ -239,11 +273,10 @@ function envoyer_rappel_cotisation(){
         send_response(false, "Type de notification invalide.");
     }
 
-    // Récupérer tous les participants et leur FCM token
+    // Récupérer les participants
     $stmtParticipe = $pdo->prepare("
-        SELECT p.*, t.montant_cotisation, w.fcm_token 
+        SELECT p.code_participant, w.fcm_token 
         FROM participer p
-        INNER JOIN tontine t ON p.code_tontine=t.code_tontine
         INNER JOIN participants w ON w.code_participant = p.code_participant
         WHERE p.code_tontine = ?
     ");
@@ -254,10 +287,11 @@ function envoyer_rappel_cotisation(){
         send_response(false, "Cette tontine n'a aucun participant pour l'instant");
     }
 
-    foreach($participants as $participant){
-        $contenu = "Pensez à payer votre cotisation de ".$participant['montant_cotisation'].". Merci !";
+    $succes = 0;
+    foreach ($participants as $participant) {
+        $contenu = "Pensez à payer votre cotisation de ".$tontine['montant_cotisation'].". Merci !";
 
-        // Enregistrement dans la BDD
+        // Enregistrer en BDD
         $stmt = $pdo->prepare("
             INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
             VALUES (?, ?, ?, ?, ?)
@@ -270,14 +304,20 @@ function envoyer_rappel_cotisation(){
             $data['code_tontine']
         ]);
 
-        // Envoi du push si FCM token disponible
+        // Envoi push
         if (!empty($participant['fcm_token'])) {
-            sendPushNotification($participant['fcm_token'], "Rappel cotisation", $contenu);
+            $ok = sendPushNotification($participant['fcm_token'], "Rappel cotisation", $contenu);
+            if ($ok) $succes++;
         }
     }
 
-    send_response(true, "Rappel envoyée avec succès.");
+    if ($succes > 0) {
+        send_response(true, "Rappel de cotisation envoyé à $succes participant(s).");
+    } else {
+        send_response(false, "Impossible d'envoyer les rappels de cotisation.");
+    }
 }
+
 
 
 
@@ -297,7 +337,7 @@ function lister_notification1(){
         INNER JOIN statut_notification s ON n.id_statut_notification = s.id_statut_notification
         INNER JOIN type_notification t ON n.id_type_notification = t.id_type_notification
         WHERE n.code_participant = ? AND s.statut_notification=?
-        ORDER BY n.date_envoie DESC
+        ORDER BY n.date_envoie DESC LIMIT 10
     ");
     $stmt->execute([$data['code_participant'],"Non lu"]);
     $notifs = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -311,6 +351,10 @@ function lister_notification1(){
 
 
 function lister_notification() {
+
+    //Vérifier le token utilisateur avant tous !
+    //$decoder=verifier_token();
+
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (!isset($data['code_participant']) || empty($data['code_participant'])) {
@@ -333,7 +377,7 @@ function lister_notification() {
                 ON n.id_statut_notification = s.id_statut_notification
             INNER JOIN type_notification t 
                 ON n.id_type_notification = t.id_type_notification
-            WHERE n.code_participant = :code_participant
+            WHERE n.code_participant = :code_participant ORDER BY n.date_envoie DESC LIMITS=10
         ";
 
         $params = ["code_participant" => $data['code_participant']];
@@ -366,10 +410,14 @@ function lister_notification() {
 
 
 function supprimer_notification() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents('php://input'), true);
 
-    if (!isset($data['id_notification'])) {
-        send_response(false, "ID de la notification requis.");
+    if (!isset($data['id_notification'],$data['code_participant'])) {
+        send_response(false, "Veuillez vérifier tout les champs.");
     }
 
     $pdo = getDB();
@@ -384,6 +432,11 @@ function supprimer_notification() {
 }
 
 function lire_notification() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+    
     $data = json_decode(file_get_contents('php://input'), true);
 
     if (!isset($data['id_notification'],$data['code_participant'])) {
