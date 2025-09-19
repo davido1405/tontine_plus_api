@@ -111,10 +111,7 @@ function ajouter_penalites(){
 
 //Notifications de paiement
 function envoyer_notification_paiement($code_tontine,$code_participant){
-
     $pdo = getDB();
-
-    // Récupérer le participant qui a payé
     $stmtParticipe = $pdo->prepare("
         SELECT p.*, w.fcm_token,t.montant_cotisation 
         FROM participer p
@@ -122,12 +119,14 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
         INNER JOIN participants w ON w.code_participant = p.code_participant
         WHERE p.code_tontine = ?
     ");
-    $stmtParticipe->execute($code_tontine);
+    $stmtParticipe->execute([$code_tontine]);
     $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
 
     if (!$participants) {
-        send_response(false, "Une erreur s'est produite, veuillez en informer le service technique");
+        throw new Exception("Aucun participant trouvé pour cette tontine");
     }
+
+    $nomParicipant = "";
     foreach($participants as $participant){
         if($participant['code_participant']==$code_participant){
             $nomParicipant=$participant['nom']." ".$participant['prenom'];
@@ -141,8 +140,9 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
             sendPushNotification($token, "Paiement de cotisation", $contenu);
         }
     }
-    
+    return true;
 }
+
 
 
 //Fonction pour payer les cotisations
@@ -166,11 +166,12 @@ function payer_cotisation(){
         $stmt4->execute([$data['code_tontine']]);
         $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
 
+
         if(!$tontine){
             throw new Exception("Cette tontine n'existe pas.");
         }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
             throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
-        }else if($data['montant']<$tontine['montant_cotisation']){
+        }else if($data['montant']*1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
         }
 
@@ -183,8 +184,9 @@ function payer_cotisation(){
             throw new Exception("Mode paiement non pris en charge!");
         }
 
-        $commission=$data['montant']-$tontine['montant_cotisation'];
-        $montantCotiser=$data['montant']-$commission;
+        $montantCotiser = $tontine['montant_cotisation'];
+        $commission = $data['montant'] - $montantCotiser;
+
 
         //Générer un code de cotisation
         $code_coti=code_cotisation();
@@ -209,23 +211,23 @@ function payer_cotisation(){
         $stmt6=$pdo->prepare("INSERT INTO commissions (operateur,montant_commission,date_paiement) VALUES(?,?,?)");
         $stmt6->execute([$data['libelle_mode_paiement'],$commission,date('Y-m-d H:i:s')]);
         
-        if(!$stmt6){
+        if($stmt6->rowCount() == 0){
             throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
         }
 
         //Mettre à jour le solde du wallet de la tontine
-        
-        $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine = solde_tontine + ? WHERE code_tontine = ?");
-        $maj->execute([$montantCotiser,$data['code_tontine']]);
-        if($maj->rowCount()==0){
+        $codeTontine = isset($data['code_tontine']) ? trim((string)$data['code_tontine']) : null;
+
+        $maj = $pdo->prepare("UPDATE wallet_tontine 
+                            SET solde_tontine = solde_tontine + ? 
+                            WHERE code_tontine = ?");
+        $maj->execute([(float)$montantCotiser, $codeTontine]);
+
+        if($maj->rowCount() == 0){
             throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
-        }
-        if($maj->errorCode() !== "00000"){
-            throw new Exception("Erreur SQL lors de la mise à jour du solde tontine");
         }
         //Envoie du push pour notifier le paiement aux autres utilisateurs
         envoyer_notification_paiement($data['code_tontine'],$data['code_participant']);
-        
         
         $pdo->commit();
 

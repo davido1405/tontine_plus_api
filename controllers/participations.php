@@ -9,8 +9,8 @@ use Firebase\JWT\JWT;
 
 function ajouter_participation() {
 
-    //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    // Vérifier le token utilisateur
+    $decoder = verifier_token();
     
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -20,9 +20,9 @@ function ajouter_participation() {
 
     try {
         $pdo = getDB();
-        $pdo->beginTransaction(); // ✅ Début de la transaction
+        $pdo->beginTransaction();
 
-        // 🔒 Verrouiller la tontine pour éviter inscriptions concurrentes
+        // 🔒 Verrouiller la tontine
         $stmt = $pdo->prepare("SELECT * FROM tontine WHERE code_tontine = ? FOR UPDATE");
         $stmt->execute([$data['code_tontine']]);
         $isTontine = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -70,27 +70,30 @@ function ajouter_participation() {
         $stmt->execute([$data['code_tontine']]);
         $nombreParticipant = (int) $stmt->fetchColumn();
 
-        $limite = (int)$isTontine['nombre_participant'];
+        $limite = (int) $isTontine['nombre_participant'];
 
+        $pdo->commit();
+
+        // 🚀 Si la tontine est pleine, on déclenche immédiatement la génération des tours
         if ($nombreParticipant >= $limite) {
-            $stmt = $pdo->prepare("UPDATE tontine SET statut = 'Pleine',etat_tontine='En cours' WHERE code_tontine = ?");
+            $stmt = $pdo->prepare("UPDATE tontine SET statut = 'Pleine', etat_tontine='En cours' WHERE code_tontine = ?");
             $stmt->execute([$data['code_tontine']]);
-            // ⚠️ On ne bloque pas la réponse ici
-            register_shutdown_function(function() use ($data) {
-                lister_tour($data['code_tontine']);
-            });
+
+            // Appel direct à la fonction de génération des tours
+            lister_tour($data['code_tontine']);
         }
 
-        $pdo->commit(); // ✅ Valider la transaction
+        // Sinon réponse classique
         send_response(true, "Vous participez désormais à cette tontine.");
 
     } catch (PDOException $e) {
         if ($pdo->inTransaction()) {
-            $pdo->rollBack(); // rollback si erreur
+            $pdo->rollBack();
         }
         send_response(false, "Erreur : " . $e->getMessage());
     }
 }
+
 
 
 
