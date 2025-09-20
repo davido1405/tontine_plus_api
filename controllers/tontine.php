@@ -449,7 +449,7 @@ function transactions(){
         
         ORDER BY date_transaction DESC;
         ");
-    $stmt->execute([$data['code_tontine'],$data['code_tontine'],$data['code_tontine']]);
+    $stmt->execute([$data['code_tontine'],$data['code_tontine']]);
     $resultats=$stmt->fetchAll(PDO::FETCH_ASSOC);
     if($resultats){
         $transactions=[];

@@ -113,7 +113,7 @@ function ajouter_penalites(){
 function envoyer_notification_paiement($code_tontine,$code_participant){
     $pdo = getDB();
     $stmtParticipe = $pdo->prepare("
-        SELECT p.*, w.fcm_token,t.montant_cotisation 
+        SELECT p.*, w.*,t.montant_cotisation 
         FROM participer p
         INNER JOIN tontine t ON p.code_tontine=t.code_tontine
         INNER JOIN participants w ON w.code_participant = p.code_participant
@@ -129,7 +129,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
     $nomParicipant = "";
     foreach($participants as $participant){
         if($participant['code_participant']==$code_participant){
-            $nomParicipant=$participant['nom']." ".$participant['prenom'];
+            $nomParicipant=$participant['nom_participant']." ".$participant['prenoms_participant'];
         }
     }
 
