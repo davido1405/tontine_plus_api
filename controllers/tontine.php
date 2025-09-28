@@ -274,7 +274,6 @@ function lister_tour(){
     //Vérifier le token utilisateur avant tous !
     $decoder=verifier_token();
 
-
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(empty($data['code_tontine'])){
@@ -374,6 +373,7 @@ function lister_tour(){
         }
 
         $pdo->commit();
+        
         send_response(true,"Tours générés avec succès !");
     } catch (\Throwable $th) {
         if ($pdo->inTransaction()) $pdo->rollBack();

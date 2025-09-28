@@ -41,6 +41,10 @@ try {
         $stmt->execute([$code_participant, $tontine['code_tontine']]);
         $last = $stmt->fetch(PDO::FETCH_ASSOC);
 
+
+        //Penser à prendre en compte la possibilité de payer plusieurs tour d'avance
+
+
         if ($last) {
             $now = new DateTime();
             $datePai = new DateTime($last['date_paiement']);
@@ -80,7 +84,7 @@ try {
             
         }
     }
-}
+    }
     $pdo->commit();
 } catch (\Throwable $e) {
     $pdo->rollBack();

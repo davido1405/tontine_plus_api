@@ -171,7 +171,7 @@ function payer_cotisation(){
             throw new Exception("Cette tontine n'existe pas.");
         }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
             throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
-        }else if($data['montant']*1.02<$tontine['montant_cotisation']){
+        }else if(!$data['montant']*1.02==$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
         }
 
