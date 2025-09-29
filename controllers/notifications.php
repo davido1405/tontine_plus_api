@@ -137,17 +137,23 @@ function envoyer_notification_penlaite(){
 
 function sendPushNotification($token, $title, $body) {
     $logFile = __DIR__ . '/fcm_debug.log';
+    
+    // Vérifier que le token n'est pas vide
+    if (empty($token)) {
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Token FCM vide\n", FILE_APPEND);
+        return false;
+    }
 
     // Chemin vers le fichier JSON du compte de service
-    $serviceAccountPath = __DIR__ . '/djarrafinances-68d6f3033cc6.json';
+    $serviceAccountPath = __DIR__ . '/../djarrafinances-68d6f3033cc6.json';
     if (!file_exists($serviceAccountPath)) {
-        file_put_contents($logFile, "Fichier service account non trouvé: $serviceAccountPath\n", FILE_APPEND);
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Fichier service account non trouvé: $serviceAccountPath\n", FILE_APPEND);
         return false;
     }
 
     $serviceAccount = json_decode(file_get_contents($serviceAccountPath), true);
     if (!$serviceAccount) {
-        file_put_contents($logFile, "Impossible de lire le fichier JSON du service account\n", FILE_APPEND);
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Impossible de lire le fichier JSON du service account\n", FILE_APPEND);
         return false;
     }
 
@@ -161,8 +167,11 @@ function sendPushNotification($token, $title, $body) {
             'iat' => $now,
             'exp' => $now + 3600
         ];
-
-        require_once __DIR__ . '/vendor/autoload.php'; // Assure-toi que Composer est installé
+        
+        if (!class_exists('\Firebase\JWT\JWT')) {
+            throw new Exception("Librairie Firebase JWT non installée");
+        }
+        
         $jwt = \Firebase\JWT\JWT::encode($claim, $serviceAccount['private_key'], 'RS256', $serviceAccount['private_key_id']);
 
         // Récupérer access_token
@@ -175,22 +184,29 @@ function sendPushNotification($token, $title, $body) {
             'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
             'assertion' => $jwt
         ]));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        
         $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
         if ($response === false) {
-            throw new Exception("Erreur CURL: " . curl_error($ch));
+            curl_close($ch);
+            throw new Exception("Erreur CURL pour access token: " . curl_error($ch));
         }
         curl_close($ch);
 
         $data = json_decode($response, true);
-        if (!isset($data['access_token'])) {
-            throw new Exception("Access token non reçu. Réponse : " . $response);
+        if ($httpCode !== 200 || !isset($data['access_token'])) {
+            throw new Exception("Access token non reçu. Code HTTP: $httpCode, Réponse: " . $response);
         }
+        
         $accessToken = $data['access_token'];
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Access token récupéré avec succès\n", FILE_APPEND);
 
         // Préparer le message
         $message = [
             'message' => [
-                'token' => $token, // le token FCM du device
+                'token' => $token,
                 'notification' => [
                     'title' => $title,
                     'body' => $body,
@@ -200,17 +216,15 @@ function sendPushNotification($token, $title, $body) {
                 ],
                 'apns' => [
                     'headers' => [
-                        'apns-priority' => '10' // 10 = immédiat sur iOS
+                        'apns-priority' => '10'
                     ]
                 ],
             ],
         ];
 
-
-
         // Envoi du push
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, 'https://fcm.googleapis.com/v1/projects/gerematontine/messages:send');
+        curl_setopt($ch, CURLOPT_URL, 'https://fcm.googleapis.com/v1/projects/djarrafinances/messages:send');
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Authorization: Bearer ' . $accessToken,
@@ -218,19 +232,40 @@ function sendPushNotification($token, $title, $body) {
         ]);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($message));
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        
         $result = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        
         if ($result === false) {
+            curl_close($ch);
             throw new Exception("Erreur CURL lors de l'envoi du push: " . curl_error($ch));
         }
         curl_close($ch);
 
-        // Log pour debug
-        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Push envoyé: $title -> $token\n", FILE_APPEND);
-
-        return $result;
+        // Analyser la réponse
+        $resultData = json_decode($result, true);
+        
+        if ($httpCode === 200) {
+            // Succès
+            file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] ✅ Push envoyé avec succès: '$title' -> Token: " . substr($token, 0, 20) . "...\n", FILE_APPEND);
+            return true;
+        } else {
+            // Erreur
+            $errorMessage = isset($resultData['error']['message']) ? $resultData['error']['message'] : 'Erreur inconnue';
+            file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] ❌ Échec envoi push. Code HTTP: $httpCode, Erreur: $errorMessage, Token: " . substr($token, 0, 20) . "...\n", FILE_APPEND);
+            
+            // Si le token est invalide, on peut log spécifiquement
+            if (strpos($errorMessage, 'registration-token-not-registered') !== false || 
+                strpos($errorMessage, 'invalid-registration-token') !== false) {
+                file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] 🚫 Token FCM invalide ou expiré\n", FILE_APPEND);
+            }
+            
+            return false;
+        }
 
     } catch (Exception $e) {
-        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Erreur: " . $e->getMessage() . "\n", FILE_APPEND);
+        file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] ❌ Exception: " . $e->getMessage() . "\n", FILE_APPEND);
         return false;
     }
 }
@@ -353,7 +388,7 @@ function lister_notification1(){
 function lister_notification() {
 
     //Vérifier le token utilisateur avant tous !
-    //$decoder=verifier_token();
+    $decoder=verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 

@@ -111,36 +111,64 @@ function ajouter_penalites(){
 
 //Notifications de paiement
 function envoyer_notification_paiement($code_tontine,$code_participant){
-    $pdo = getDB();
-    $stmtParticipe = $pdo->prepare("
-        SELECT p.*, w.*,t.montant_cotisation 
-        FROM participer p
-        INNER JOIN tontine t ON p.code_tontine=t.code_tontine
-        INNER JOIN participants w ON w.code_participant = p.code_participant
-        WHERE p.code_tontine = ?
-    ");
-    $stmtParticipe->execute([$code_tontine]);
-    $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
+    try {
+        $pdo = getDB();
+        $stmtParticipe = $pdo->prepare("
+            SELECT p.*, w.*,t.montant_cotisation 
+            FROM participer p
+            INNER JOIN tontine t ON p.code_tontine=t.code_tontine
+            INNER JOIN participants w ON w.code_participant = p.code_participant
+            WHERE p.code_tontine = ?
+        ");
+        $stmtParticipe->execute([$code_tontine]);
+        $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
 
-    if (!$participants) {
-        throw new Exception("Aucun participant trouvé pour cette tontine");
-    }
-
-    $nomParicipant = "";
-    foreach($participants as $participant){
-        if($participant['code_participant']==$code_participant){
-            $nomParicipant=$participant['nom_participant']." ".$participant['prenoms_participant'];
+        if (!$participants) {
+            error_log("Aucun participant trouvé pour la tontine: " . $code_tontine);
+            throw new Exception("Aucun participant trouvé pour cette tontine");
         }
-    }
 
-    foreach($participants as $participant){
-        if($participant['code_participant']!=$code_participant){
-            $token=$participant['fcm_token'];
-            $contenu=$nomParicipant." vient de payer sa cotisation(".$participant['montant_cotisation']." FCFA). A qui le tour ?";
-            sendPushNotification($token, "Paiement de cotisation", $contenu);
+        $nomParticipant = "";
+        foreach($participants as $participant){
+            if($participant['code_participant']==$code_participant){
+                $nomParticipant=$participant['nom_participant']." ".$participant['prenoms_participant'];
+                break;
+            }
         }
+
+        if(empty($nomParticipant)) {
+            error_log("Participant payeur non trouvé: " . $code_participant);
+            return false;
+        }
+
+        $notifications_envoyees = 0;
+        foreach($participants as $participant){
+            if($participant['code_participant']!=$code_participant){
+                $token=$participant['fcm_token'];
+                
+                if(empty($token)) {
+                    error_log("Token FCM vide pour participant: " . $participant['code_participant']);
+                    continue;
+                }
+                
+                $contenu=$nomParticipant." vient de payer sa cotisation(".$participant['montant_cotisation']." FCFA). À qui le tour ?";
+                
+                $result = sendPushNotification($token, "Paiement de cotisation", $contenu);
+                if($result) {
+                    $notifications_envoyees++;
+                } else {
+                    error_log("Échec notification pour participant: " . $participant['code_participant']);
+                }
+            }
+        }
+        
+        error_log("Notifications envoyées: " . $notifications_envoyees . " sur " . (count($participants)-1));
+        return true;
+        
+    } catch (Exception $e) {
+        error_log("Erreur notification paiement: " . $e->getMessage());
+        return false;
     }
-    return true;
 }
 
 
@@ -171,7 +199,8 @@ function payer_cotisation(){
             throw new Exception("Cette tontine n'existe pas.");
         }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
             throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
-        }else if(!$data['montant']*1.02==$tontine['montant_cotisation']){
+            //Corriger le calcul des frais ici après avoir corrigé au niveau de l'app
+        }else if($data['montant']*1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
         }
 
