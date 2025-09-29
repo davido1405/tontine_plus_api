@@ -212,15 +212,23 @@ function sendPushNotification($token, $title, $body) {
                     'body' => $body,
                 ],
                 'android' => [
-                    'priority' => 'high'
+                    'priority' => 'high',
+                    'ttl' => '0s'
                 ],
                 'apns' => [
                     'headers' => [
-                        'apns-priority' => '10'
+                        'apns-priority' => '10',
+                        'apns-expiration' => '0'
                     ]
                 ],
+                'data' => [
+                    'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
+                    'title' => $title,
+                    'body'  => $body,
+                ]
             ],
         ];
+
 
         // Envoi du push
         $ch = curl_init();
