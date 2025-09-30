@@ -1,7 +1,7 @@
 <?php
 include_once __DIR__ . '/../config/db.php';
 include_once __DIR__ . '/../helpers/responses.php';
-include_once  'notifications.php';
+include_once  __DIR__ . '/../controllers/notifications.php';
 require_once __DIR__ . '/../vendor/autoload.php';
 
 require_once __DIR__ . '/../manageJWT.php';
@@ -113,8 +113,15 @@ function ajouter_penalites(){
 function envoyer_notification_paiement($code_tontine,$code_participant){
     try {
         $pdo = getDB();
+
+        //Récupérer le montant de cotisation de la tontine concernée
+        $stmt1=$pdo->prepare("SELECT montant_cotisation as montant FROM tontine where code_tontine=?");
+        $stmt1->execute([$code_tontine]);
+        $resultat=$stmt1->fetch(PDO::FETCH_ASSOC);
+
+        //Récupérer les participants maintenant
         $stmtParticipe = $pdo->prepare("
-            SELECT p.*, w.*,t.montant_cotisation 
+            SELECT p.*, w.* 
             FROM participer p
             INNER JOIN tontine t ON p.code_tontine=t.code_tontine
             INNER JOIN participants w ON w.code_participant = p.code_participant
@@ -151,7 +158,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
                     continue;
                 }
                 
-                $contenu=$nomParticipant." vient de payer sa cotisation(".$participant['montant_cotisation']." FCFA). À qui le tour ?";
+                $contenu=$nomParticipant." vient de payer sa cotisation(".$resultat['montant']." FCFA). À qui le tour ?";
                 
                 $result = sendPushNotification($token, "Paiement de cotisation", $contenu);
                 if($result) {
@@ -255,6 +262,7 @@ function payer_cotisation(){
         if($maj->rowCount() == 0){
             throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
         }
+
         //Envoie du push pour notifier le paiement aux autres utilisateurs
         envoyer_notification_paiement($data['code_tontine'],$data['code_participant']);
         

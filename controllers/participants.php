@@ -37,7 +37,7 @@ function register_participant() {
         }
 
         $stmt = $pdo->prepare("INSERT INTO participants (code_participant, nom_participant, prenoms_participant, mot_passe, numro_mobile_money) VALUES (?, ?, ?, ?, ?)");
-        $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],$data['password'],$data['mobile']]);
+        $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],password_hash($data['password'],PASSWORD_DEFAULT),$data['mobile']]);
         $token=generer_token_utilisateur($code_parti,$data['mobile']);
         send_response(true, "Participant inscrit avec succès",[
             "code_participant" => $code_parti,
@@ -72,11 +72,18 @@ function login_participant() {
     try {
         $pdo = getDB();
         $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant FROM participants p
-        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant WHERE numro_mobile_money=? AND mot_passe=?");
-        $stmt->execute([$data['numero_participant'],$data['password']]);
-        $participant = $stmt->fetch(PDO::FETCH_ASSOC);
+        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant WHERE numro_mobile_money=?");
+        $stmt->execute([$data['numero_participant']]);
+        $participant = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         if ($participant) {
+            //Si un participant existe avec ce numéro alors on verifie le mot de passe
+            if(!password_verify($data['password'],$participant['mot_passe'])){
+                //Si le mot de passe envoyer côté font ne correspond pas
+                send_response(false,"Identifiants ou mot de passe incorrects");
+            }
+
+            //Sinon envoyer les informations de l'utilisateur pour la session
             $stmt2=$pdo->prepare("SELECT code_tontine FROM participer WHERE code_participant=? ORDER BY date_participation DESC LIMIT 1");
             $stmt2->execute([$participant['code_participant']]);
             $participations=$stmt2->fetch(PDO::FETCH_ASSOC);
@@ -109,8 +116,6 @@ function login_participant() {
                     "jwt_token"=>$token
                 ]);
             }
-        } else {
-            send_response(false,"Identifiants ou mot de passe incorrects");
         }
 
     } catch (PDOException $e) {

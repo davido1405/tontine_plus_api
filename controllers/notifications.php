@@ -22,6 +22,7 @@ function envoyer_notification_personnalise(){
         send_response(false, "Champs obligatoires manquants.");
     }
 
+    $contenu=$data['contenu_notification'];
     $pdo = getDB();
 
     // Récupérer l'ID du type de notification
@@ -42,7 +43,7 @@ function envoyer_notification_personnalise(){
         WHERE p.code_tontine = ? AND p.code_participant=?
     ");
     $stmtParticipe->execute([$data['code_tontine'],$data['code_participant']]);
-    $participant = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
+    $participant = $stmtParticipe->fetch(PDO::FETCH_ASSOC);
 
     if (!$participant) {
         send_response(false, "Une erreur s'est produite, veuillez en informer le service technique");
@@ -332,7 +333,7 @@ function envoyer_rappel_cotisation(){
 
     $succes = 0;
     foreach ($participants as $participant) {
-        $contenu = "Pensez à payer votre cotisation de ".$tontine['montant_cotisation'].". Merci !";
+        $contenu = "Pensez à payer votre cotisation de ".$tontine['montant_cotisation']." FCFA. Merci !";
 
         // Enregistrer en BDD
         $stmt = $pdo->prepare("
@@ -420,7 +421,7 @@ function lister_notification() {
                 ON n.id_statut_notification = s.id_statut_notification
             INNER JOIN type_notification t 
                 ON n.id_type_notification = t.id_type_notification
-            WHERE n.code_participant = :code_participant ORDER BY n.date_envoie DESC LIMITS=10
+            WHERE n.code_participant = :code_participant ORDER BY n.date_envoie DESC LIMIT 10
         ";
 
         $params = ["code_participant" => $data['code_participant']];
@@ -448,8 +449,6 @@ function lister_notification() {
         send_response(false, "Erreur de base de données : " . $e->getMessage());
     }
 }
-
-
 
 
 function supprimer_notification() {

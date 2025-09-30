@@ -3,17 +3,20 @@ require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/controllers/notifications.php';
 require_once __DIR__ . '/helpers/responses.php';
 require_once __DIR__ . '/vendor/autoload.php';
+
 use Firebase\JWT\JWT;
 
 $pdo = getDB();
 
 // Récupérer toutes les tontines en cours
-$tontines = $pdo->query("SELECT code_tontine, id_frequence FROM tontine WHERE etat_tontine='En cours'")->fetchAll(PDO::FETCH_ASSOC);
+$tontines = $pdo->query("SELECT t.code_tontine, f.libelle_frequence FROM tontine as t INNER JOIN frequence as f ON f.id_frequence=t.id_frequence WHERE etat_tontine='En cours'")->fetchAll(PDO::FETCH_ASSOC);
 
 try {
     $pdo->beginTransaction();
 
     foreach ($tontines as $tontine) {
+
+        
         // Récupérer participants + dernière cotisation en 1 requête JOIN
         $participants = $pdo->prepare("
             SELECT p.code_participant, p.indice_solvabilite, p.fcm_token,
@@ -52,9 +55,9 @@ try {
 
             //Vérifier si pénalité
             $penalite = false;
-            if ($libelle == 'Mensuelle' && $days >= 30) $penalite = true;
-            if ($libelle == 'Hebdomadaire' && $days >= 7) $penalite = true;
-            if ($libelle == 'Journalière' && $days >= 1) $penalite = true;
+            if ($tontine['libelle_frequence'] == 'Mensuelle' && $days >= 30) $penalite = true;
+            if ($tontine['libelle_frequence'] == 'Hebdomadaire' && $days >= 7) $penalite = true;
+            if ($tontine['libelle_frequence'] == 'Journalière' && $days >= 1) $penalite = true;
 
             if ($penalite) {
                 $nouvel_indice=max(0,$indice_precedent-5);
