@@ -74,7 +74,7 @@ function login_participant() {
         $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant FROM participants p
         INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant WHERE numro_mobile_money=?");
         $stmt->execute([$data['numero_participant']]);
-        $participant = $stmt->fetch(PDO::FETCH_ASSOC);
+        $participant = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         if ($participant) {
             //Si un participant existe avec ce numéro alors on verifie le mot de passe
@@ -117,6 +117,7 @@ function login_participant() {
                 ]);
             }
         }
+
     } catch (PDOException $e) {
         send_response(false,"Erreur : " . $e->getMessage());
     }
