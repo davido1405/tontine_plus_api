@@ -30,14 +30,21 @@ if(isset($_GET['action'])){
             break;
         case 'transactions':
             transactions();
+            break;
         case 'ordre_paiement':
             ordrePaiement();
             break;
         case 'retirer':
             retrait();
+            break;
+        case 'inviter':
+            GenererlienInvitation();
+            break;
+        case 'verifierInvitation':
+            verifierInvitation();
+            break;
         default:
             send_response(false,"Action incconue pour la tontine");
-
     }
 }else{
     send_response(false, "Aucune action précisée !");

@@ -1,13 +1,15 @@
 <?php
 include_once __DIR__ . '/../config/db.php';
+include_once __DIR__ . '/../config/config.php';
 
 include_once __DIR__ . '/../helpers/responses.php';
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
-require_once __DIR__ . '/../manageJWT.php';
+include_once __DIR__ . '/../manageJWT.php';
 
 use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
 
 
 //Générer un code tontine unique
@@ -133,6 +135,131 @@ function create_tontine(){
     }catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         send_response(false, $e->getMessage());
+    }
+}
+
+//Générer un lien d'invitation
+function GenererlienInvitation(){
+
+    //Vérifier le tonken session d'abord
+    $decoder=verifier_token();
+
+    //Définir le type de données
+    $data=json_decode(file_get_contents("php://input"),true);
+
+    if(!isset($data['code_tontine'],$data['code_participant'])||empty($data['code_tontine'])||empty($data['code_participant'])){
+        send_response(false,"Veuillez vérifier les différents champs");
+    }
+
+    $config = require __DIR__ .'/../config/config.php';
+    $secret_code=$config['jwt_code_secret'];
+
+    //Préparer le payload
+    $payload=[
+        'iss'=>$config['domain_name'],
+        'iat'=>time(),
+        'exp'=>time() + (24 * 60 * 60),//Valide 24H
+        'code_organisateur'=>$data['code_participant'],
+        'code_tontine'=>$data['code_tontine'],
+        'scope'=>'invitation'
+    ];
+
+    $token=JWT::encode($payload,$secret_code,'HS256');
+
+    //Enregistrement en base
+    $pdo=getDB();
+
+    try {
+        //Récupérer le nombre d'utilisateur pour la tontine
+        $stmt1=$pdo->prepare("SELECT nombre_participant as utilisateur_max FROM tontine WHERE code_tontine=?");
+        $stmt1->execute([$data['code_tontine']]);
+        $tontine=$stmt1->fetch(PDO::FETCH_ASSOC);
+        if(!$tontine){
+            send_response(false,"Cette tontine n'existe pas !");
+        }
+
+        $date_creation = date('Y-m-d H:i:s', $payload['iat']);
+        $date_expiration = date('Y-m-d H:i:s', $payload['exp']);
+        $stmt=$pdo->prepare("INSERT INTO lien_invitation(date_creation,date_expiration,code_organisateur,code_tontine,token,utilisation_max) VALUES (?,?,?,?,?,?)");
+        $stmt->execute([$date_creation,$date_expiration,$data['code_participant'],$data['code_tontine'],$token,$tontine['utilisateur_max']]);
+        if($stmt->rowCount()===0){
+            send_response(false,"Une erreur s'est produite lors de la génération du lien !");
+        }
+        //A modifier quand on passera en production
+        $lienInvitation="djarrafinances://app/invite?token=".$token;
+
+        send_response(true,"Lien généré avec succès !",[
+            'lien'=>$lienInvitation
+        ]);
+    } catch (Exception $e) {
+        send_response(false,"Une erreur s'est produite lors de la génération du lien");
+    }
+}
+
+//Vérifier le lien
+function verifierInvitation(){
+
+    //Définir le type de donnée
+    $data=json_decode(file_get_contents("php://input"),true);
+
+    if(!isset($data['token'])||empty($data['token'])){
+        send_response(false,"Veuillez vérifier les différents champs");
+    }
+    $token=$data['token'];
+
+    $config = require __DIR__ .'/../config/config.php';
+    $secret_code=$config['jwt_code_secret'];
+    
+    //Décoder le token récupéré
+    try{
+        $decode=JWT::decode($token, New key($secret_code,'HS256'));
+        //Vérifier si le lien n'a pas expiré
+        if($decode->exp < time()){
+            send_response(false,"Ce lien a expiré !");
+        }
+        if($decode->scope!=='invitation'){
+            send_response(false,"Format token incorrecte");
+        }
+        $code_tontine=$decode->code_tontine;
+        $code_participant_hote=$decode->code_organisateur;
+
+        
+        $pdo=getDB();
+
+        $pdo->beginTransaction();
+
+        //Vérifier que la tontine existe et le que l'organisateur est bien à l'origine du lien
+        $stmt=$pdo->prepare("SELECT t.*,o.*,f.libelle_frequence,c.libelle_frequence_paiement FROM tontine as t INNER JOIN organiser_tontine as o ON t.code_tontine=o.code_tontine INNER JOIN frequence as f ON f.id_frequence=t.id_frequence INNER JOIN frequence_paiement as c ON c.id_frequence_paiement=t.id_frequence_paiement  WHERE t.code_tontine=? AND o.code_participant=?");
+        $stmt->execute([$code_tontine,$code_participant_hote]);
+        $tontine=$stmt->fetch(PDO::FETCH_ASSOC);
+        if(!$tontine){
+            send_response(false,"L'émeteur de ce lien n'a pas les autorisation requise !");
+        }
+        //Vérifier que le lien est encore utilisable
+        $stmt1=$pdo->prepare("SELECT * FROM lien_invitation WHERE code_tontine=? AND token=? AND compteur_utilisation<utilisation_max");
+        $stmt1->execute([$code_tontine,$token]);
+        $resultat=$stmt1->fetch(PDO::FETCH_ASSOC);
+        if(!$resultat){
+            send_response(false,"Lien invalide ou corrompus");
+        }
+        //Mettre à jour compteur utilisation
+        $stmt2=$pdo->prepare("UPDATE lien_invitation SET compteur_utilisation=compteur_utilisation+1 WHERE code_tontine=? AND token=?");
+        $stmt2->execute([$code_tontine,$token]);
+        if($stmt2->rowCount()===0){
+            send_response(false,"Une erreur s'est produite lors de la mise à jour de compteur d'utilisation du lien !");
+        }
+        $pdo->commit();
+        //Tout est en règle le participant peut réjoindre la tontine
+        send_response(true,"Lien validé avec succès !",[
+            'code_tontine'=>$tontine['code_tontine'],
+            'nom_tontine'=>$tontine['nom_tontine'],
+            'montant_cotisation'=>$tontine['montant_cotisation'],
+            'frequence_cotisation'=>$tontine['libelle_frequence'],
+            'frequence_paiement'=>$tontine['libelle_frequence_paiement']
+        ]);
+    }catch(Exception $e){
+        $pdo->rollBack();
+        send_response(false,"Erreur complet au niveau de la transaction !");
     }
 }
 
@@ -536,8 +663,8 @@ function retrait() {
         send_response(false, "Veuillez remplir tous les champs !");
     }
 
+    $code_tontine=$data['code_tontine'];
     $pdo = getDB();
-
     try {
         $pdo->beginTransaction();
 
@@ -606,6 +733,53 @@ function retrait() {
             $etat="Terminée";
             $u7=$pdo->prepare("UPDATE tontine SET etat_tontine=? WHERE code_tontine=?");
             $u7->execute([$etat,$data['code_tontine']]);
+
+            //Récupérer les participants maintenant
+            $stmtParticipe = $pdo->prepare("
+                SELECT p.*, w.* 
+                FROM participer p
+                INNER JOIN tontine t ON p.code_tontine=t.code_tontine
+                INNER JOIN participants w ON w.code_participant = p.code_participant
+                WHERE p.code_tontine = ?
+            ");
+            $stmtParticipe->execute([$code_tontine]);
+            $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
+
+            if (!$participants) {
+                error_log("Aucun participant trouvé pour la tontine: " . $code_tontine);
+                throw new Exception("Aucun participant trouvé pour cette tontine");
+            }
+
+            //Envoyer un notification à tout les participants pour informer de la fin de la tontine
+            foreach($participants as $participant){
+                $token=$participant['fcm_token'];
+                
+                if(empty($token)) {
+                    error_log("Token FCM vide pour participant: " . $participant['code_participant']);
+                    continue;
+                }
+                
+                $phrases_fin_tontine = [
+                    "Encore une tontine qui se termine sans bagarre 🚀. On relance ou pas ? 😏😏",
+                    "Mission accomplie ! Les cotisations sont dans la poche 💰. Qui est partant pour la prochaine ? 😎",
+                    "Tontine terminée 🎉. Prochain tour, mêmes règles ou on innove ? 😉",
+                    "Bravo à tous ! Cette session a été un succès 🚀. On remet ça bientôt ? 😏",
+                    "Et voilà, une tontine de plus dans les annales 📜. Qui signe pour la suivante ? 😎",
+                    "Pas de drame, que des gains 💸. On relance la machine ? 😏",
+                    "Une tontine sans clash, c'est rare 🔥. Qui veut tenter la prochaine ? 😎",
+                    "Caisse remplie ✅, sourires garantis 😁. On repart pour un tour ? 🎯"
+                ];
+
+                // Tirer une phrase aléatoire
+                $contenu_aleatoire = $phrases_fin_tontine[array_rand($phrases_fin_tontine)];
+                
+                $result = sendPushNotification($token, "Fin de la tontine", $contenu_aleatoire);
+                if($result) {
+                    $notifications_envoyees++;
+                } else {
+                    error_log("Échec notification pour participant: " . $participant['code_participant']);
+                }
+        }
         }
         $pdo->commit();
 
@@ -614,7 +788,20 @@ function retrait() {
         $u8->execute([$data['code_tontine']]);
         $newP=$u8->fetch(PDO::FETCH_ASSOC);
 
-        $message=$etat=="Terminée"? "Retrait de ".$montant." FCFA éffectué avec succès. La tontine est terminée":"Retrait éffectué avec succès. Au suivant !";
+        $phrases_terminée = [
+            "Retrait de $montant FCFA effectué avec succès. La tontine est terminée 🚀. On relance ou pas ? 😏",
+            "Caisse vidée ✅. Retrait de $montant FCFA effectué. Tontine terminée 🎉",
+            "Mission accomplie 💰 ! $montant FCFA retirés, tontine terminée. Qui est partant pour la prochaine ? 😎",
+            "Et voilà, $montant FCFA dans la poche 😁. La tontine est terminée 🔥"
+        ];
+        $phrases_en_cours = [
+            "Retrait de $montant FCFA effectué avec succès. Au suivant ! 😏",
+            "Caisse approvisionnée 💸. Retrait de $montant FCFA effectué. On continue ! 🚀",
+            "Retrait de $montant FCFA effectué ✅. Prochain participant, c’est votre tour ! 😎",
+            "Montant de $montant FCFA retiré avec succès. La tontine continue 😁"
+        ];
+
+        $message = $etat == "Terminée" ? $phrases_terminée[array_rand($phrases_terminée)] : $phrases_en_cours[array_rand($phrases_en_cours)];
 
         send_response(true, $message, [
             'total_tour'=>$newP['nombre_participant'],
