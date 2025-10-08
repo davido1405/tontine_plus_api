@@ -110,7 +110,7 @@ function ajouter_penalites(){
 }
 
 //Notifications de paiement
-function envoyer_notification_paiement($code_tontine,$code_participant){
+function envoyer_notification_paiement($code_tontine,$code_participant,$montantCotiser){
     try {
         $pdo = getDB();
 
@@ -148,6 +148,14 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
             return false;
         }
 
+        if($montantCotiser>$resultat['montant']){
+            $montant=$montantCotiser;
+            $contenu=$nomParticipant." vient de payer sa cotisation(".$montant." FCFA). Il a donc quelques tours d'avance. Qui le rattrape ?";
+        }else{
+            $montant=$resultat['montant'];
+            $contenu=$nomParticipant." vient de payer sa cotisation(".$montant." FCFA). A qui le tour ?";
+        }
+
         $notifications_envoyees = 0;
         foreach($participants as $participant){
             if($participant['code_participant']!=$code_participant){
@@ -157,10 +165,10 @@ function envoyer_notification_paiement($code_tontine,$code_participant){
                     error_log("Token FCM vide pour participant: " . $participant['code_participant']);
                     continue;
                 }
+
+                $title="Paiement de cotisation";
                 
-                $contenu=$nomParticipant." vient de payer sa cotisation(".$resultat['montant']." FCFA). À qui le tour ?";
-                
-                $result = sendPushNotification($token, "Paiement de cotisation", $contenu);
+                $result = sendPushNotification($token, $title, $contenu);
                 if($result) {
                     $notifications_envoyees++;
                 } else {
@@ -207,7 +215,7 @@ function payer_cotisation(){
         }else if($tontine['statut']!="Pleine" || $tontine['etat_tontine']!="En cours"){
             throw new Exception("Vous n'êtes pas autorisé(e) à payer des cotisations pour le moment");
             //Corriger le calcul des frais ici après avoir corrigé au niveau de l'app
-        }else if($data['montant']*1.02<$tontine['montant_cotisation']){
+        }else if($data['montant']/1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
         }
 
@@ -220,36 +228,71 @@ function payer_cotisation(){
             throw new Exception("Mode paiement non pris en charge!");
         }
 
-        $montantCotiser = $tontine['montant_cotisation'];
+        //Calculer le montant cotisé
+        $montantCotiser =$data['montant']/1.02;//Correspond maintenant au montant frais exclus parce que dans le cas de paiement en avance le montant sera supérieur au montant fixé //$tontine['montant_cotisation'];
+        //Calculer la commission
         $commission = $data['montant'] - $montantCotiser;
+        $montantRestant = $montantCotiser;
+        $montantParTour = $tontine['montant_cotisation'];
 
-
-        //Générer un code de cotisation
-        $code_coti=code_cotisation();
-
-        $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?)");
-        $stmt3->execute([
-            $code_coti,
-            $data['code_tontine'],
-            $data['code_participant'],
-            $montantCotiser,
-            date('Y-m-d H:i:s'),
-            $idModepai['id_mode_paiement'],
-            2
-        ]);
-        $row=$stmt3->rowCount();
-        if($row==0){
-           throw new Exception("Le paiement a échoué! Veuillez réessayer");
+        //Payer les tours manqués en priorité s'il y en a
+        $stmt7=$pdo->prepare("SELECT * FROM cotisations_manquees WHERE statut='Impayée' AND code_tontine=? AND code_participant=? ORDER BY date_manquee ASC");
+        $stmt7->execute([$data['code_tontine'],$data['code_participant']]);
+        $cotisations_manquees=$stmt7->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($cotisations_manquees as $cotisation_manquee) {
+            if ($montantRestant<$montantParTour) break;
+            $stmt8=$pdo->prepare("UPDATE cotisations_manquees set statut='Payée', date_rattrapage=? WHERE id_cotisation_manquee=?");
+            $stmt8->execute([date('Y-m-d H:i:s'),$cotisation_manquee['id_cotisation_manquee']]);
+            $montantRestant-=$montantParTour;
         }
 
-        //Mettre à jour le e de commissions selon le mode de paiement
+        //En suite payer le tour en cours si possible
+        if($montantRestant>=$montantParTour){
+            //Générer un code de cotisation
+            $code_coti=code_cotisation();
+
+            $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,nombre_tour_avance,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?,?)");
+            $stmt3->execute([
+                $code_coti,
+                $data['code_tontine'],
+                $data['code_participant'],
+                $montantParTour,
+                0,
+                date('Y-m-d H:i:s'),
+                $idModepai['id_mode_paiement'],
+                2
+            ]);
+            $montantRestant-=$montantParTour;
+        }
+
+        //En fin payer les tours en avance si possible
+
+        // 6️⃣ Si encore du montant → payer les tours en avance
+        $tour_en_avance = floor($montantRestant / $montantParTour);
+
+        if($tour_en_avance>0){
+            //Générer un code de cotisation
+            $code_coti=code_cotisation();
+
+            $stmt3=$pdo->prepare("INSERT INTO cotisations(code_cotisation,code_tontine,code_participant,montant,nombre_tour_avance,date_paiement,id_mode_paiement,id_statut_paiement) VALUES(?,?,?,?,?,?,?,?)");
+            $stmt3->execute([
+                $code_coti,
+                $data['code_tontine'],
+                $data['code_participant'],
+                $tour_en_avance*$tontine['montant_cotisation'],
+                $tour_en_avance,
+                date('Y-m-d H:i:s'),
+                $idModepai['id_mode_paiement'],
+                2
+            ]);
+            
+            $montantRestant-=$tour_en_avance*$montantParTour;
+        }
+
+        //Mettre à jour le montant de commissions selon le mode de paiement
         
         $stmt6=$pdo->prepare("INSERT INTO commissions (operateur,montant_commission,date_paiement) VALUES(?,?,?)");
         $stmt6->execute([$data['libelle_mode_paiement'],$commission,date('Y-m-d H:i:s')]);
-        
-        if($stmt6->rowCount() == 0){
-            throw new Exception("Une erreur s'est produite lors de la récupération de la commission");
-        }
 
         //Mettre à jour le solde du wallet de la tontine
         $codeTontine = isset($data['code_tontine']) ? trim((string)$data['code_tontine']) : null;
@@ -259,15 +302,10 @@ function payer_cotisation(){
                             WHERE code_tontine = ?");
         $maj->execute([(float)$montantCotiser, $codeTontine]);
 
-        if($maj->rowCount() == 0){
-            throw new Exception("Une erreur s'est produite lors de votre paiement. Veuillez réessayer plus tard. Merci !");
-        }
-
         //Envoie du push pour notifier le paiement aux autres utilisateurs
-        envoyer_notification_paiement($data['code_tontine'],$data['code_participant']);
+        envoyer_notification_paiement($data['code_tontine'],$data['code_participant'],$montantCotiser);
         
         $pdo->commit();
-
         send_response(true, "Paiement éffectué avec succès !");
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

@@ -80,7 +80,8 @@ function ajouter_participation() {
             $stmt->execute([$data['code_tontine']]);
 
             // Appel direct à la fonction de génération des tours
-            lister_tour($data['code_tontine']);
+            $code_tont=$data['code_tontine'];
+            lister_tour($code_tont,$relancer=false);
         }
 
         // Sinon réponse classique

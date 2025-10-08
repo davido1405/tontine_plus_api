@@ -2,6 +2,8 @@
 include_once __DIR__ . '/../config/db.php';
 include_once __DIR__ . '/../config/config.php';
 
+include_once __DIR__ . '/notifications.php';
+
 include_once __DIR__ . '/../helpers/responses.php';
 
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -374,7 +376,7 @@ function listeParticipants(){
         send_response(false,"Veuillez vérifier tous les champs");
     }
     $pdo=getDB();
-    $stmt=$pdo->prepare("SELECT p.code_participant, p.nom_participant,p.prenoms_participant,p.numro_mobile_money,p.indice_solvabilite,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=? ORDER BY p.indice_solvabilite ASC");
+    $stmt=$pdo->prepare("SELECT p.code_participant, p.nom_participant,p.prenoms_participant,p.numro_mobile_money,p.indice_solvabilite,a.date_participation,t.libelle_participant FROM participants p INNER JOIN participer as a ON p.code_participant=a.code_participant INNER JOIN type_participants as t ON p.id_type_participant=t.id_type_participant WHERE code_tontine=? ORDER BY p.indice_solvabilite DESC");
     $stmt->execute([$data['code_tontine']]);
     $listeParticipants=$stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -396,17 +398,20 @@ function listeParticipants(){
     send_response(true,"Liste des participants de la tontine",$formated);
 }
 
-function lister_tour(){
 
-    //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+function lister_tour($code_tontine=null,$relancer=false){
+    // Vérifier le token utilisateur avant tout
+    $decoder = verifier_token();
 
-    $data=json_decode(file_get_contents('php://input'),true);
-
-    if(empty($data['code_tontine'])){
-        send_response(false,"Le code tontine est manquant");
+    // Récupération des données JSON uniquement si $code_tontine non fourni
+    if ($code_tontine === null) {
+        $data = json_decode(file_get_contents('php://input'), true);
+        if (empty($data['code_tontine'])) {
+            send_response(false, "Veuillez vérifier tous les champs");
+        }
+        $code_tontine = $data['code_tontine'];
+        $relancer = !empty($data['relancer']) && ($data['relancer'] === true || $data['relancer'] === 'Oui');
     }
-
     $pdo=getDB();
 
     try {
@@ -420,7 +425,7 @@ function lister_tour(){
             INNER JOIN frequence_paiement AS fp ON fp.id_frequence_paiement = t.id_frequence_paiement
             WHERE code_tontine=?
         ");
-        $stmt->execute([$data['code_tontine']]);
+        $stmt->execute([$code_tontine]);
         $type=$stmt->fetch(PDO::FETCH_ASSOC);
 
         if(!$type){
@@ -431,7 +436,7 @@ function lister_tour(){
 
         // Nombre actuel de participants
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM participer WHERE code_tontine = ?");
-        $stmt->execute([$data['code_tontine']]);
+        $stmt->execute([$code_tontine]);
         $nombreParticipant = (int) $stmt->fetchColumn();
 
         if($nombreParticipant<$nombreLimite){
@@ -440,39 +445,43 @@ function lister_tour(){
 
         // Vérifier si des tours existent déjà
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM ordre_tirage WHERE code_tontine = ?");
-        $stmt->execute([$data['code_tontine']]);
+        $stmt->execute([$code_tontine]);
         $toursExistants = (int) $stmt->fetchColumn();
 
         // Relancer si demandé et si la tontine est terminée
-        if(isset($data['relancer']) && $data['relancer']=="Oui" && $type['etat_tontine']=="Terminée"){
+        if($relancer && $type['etat_tontine']==="Terminée"){
+            //Archiver les anciens tours
             $pdo->prepare("
                 INSERT INTO ordre_tirage_archive (code_tontine, code_participant, ordre, statut, date_tour, archived_at)
                 SELECT code_tontine, code_participant, ordre, statut, date_tour, NOW()
                 FROM ordre_tirage
                 WHERE code_tontine=?
-            ")->execute([$data['code_tontine']]);
+            ")->execute([$code_tontine]);
 
+            //Supprimer les tours actifs
             $pdo->prepare("DELETE FROM ordre_tirage WHERE code_tontine=?")
-                ->execute([$data['code_tontine']]);
+                ->execute([$code_tontine]);
             
             //J'ai rajouté ça parce que j'ai remarqué que le tour_actuel n'était pas réinitilisé
             $pdo->prepare("UPDATE tontine SET tour_actuel=1,etat_tontine=? WHERE code_tontine=?")
-                ->execute(["En cours",$data['code_tontine']]);
+                ->execute(["En cours",$code_tontine]);
 
             $toursExistants = 0; // On force régénération
         }
         
         if ($nombreParticipant == $nombreLimite && $toursExistants == 0) {
             $stmt1=$pdo->prepare("SELECT code_participant FROM participer WHERE code_tontine=?");
-            $stmt1->execute([$data['code_tontine']]);
+            $stmt1->execute([$code_tontine]);
             $participants=$stmt1->fetchAll(PDO::FETCH_ASSOC);
 
             $codes = array_column($participants, 'code_participant');
 
+            //Melanger les tours si c'est un "Tirage"
             if ($type['libelle_type_tontine'] === 'Tirage') {
                 shuffle($codes);
             }
 
+            //Date du premier tour
             $startDate = new DateTime();
 
             switch($type['libelle_frequence_paiement']){
@@ -495,16 +504,16 @@ function lister_tour(){
                     INSERT INTO ordre_tirage(code_tontine, code_participant, ordre, statut, date_tour) 
                     VALUES(?,?,?,?,?)
                 ");
-                $stmt->execute([$data['code_tontine'], $code, $ordre, 0, $dateTour->format('Y-m-d H:i:s')]);
+                $stmt->execute([$code_tontine, $code, $ordre, 0, $dateTour->format('Y-m-d H:i:s')]);
             }
         }
 
         $pdo->commit();
         
-        send_response(true,"Tours générés avec succès !");
+        return ["success" => true, "message" => "Relance effectuée avec succès !"];;
     } catch (\Throwable $th) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        send_response(false,$th->getMessage());
+        return ["success" => false, "message" => $th->getMessage()];
     }
 }
 
@@ -688,7 +697,7 @@ function retrait() {
             throw new Exception("Ce tour est déjà marqué comme payé.");
         }
         if ((int)$row['ordre'] !== (int)$row['tour_actuel']) {
-            throw new Exception("Ce n'est pas encore son tour.");
+            throw new Exception("Ce n'est pas encore ton tour.");
         }
 
         $montant = (int)$row['solde_tontine'];
@@ -728,7 +737,7 @@ function retrait() {
         
         $etat="En cours";
 
-        //Mise à jour maintenant de l'état de la tontine selon que tous les tours son payé ou pas
+        //Mise à jour maintenant de l'état de la tontine selon que tous les tours soit payés ou pas
         if($nombreP['tour_actuel']>$nombreP['nombre_participant']){
             $etat="Terminée";
             $u7=$pdo->prepare("UPDATE tontine SET etat_tontine=? WHERE code_tontine=?");
