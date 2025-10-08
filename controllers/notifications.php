@@ -14,7 +14,7 @@ use Firebase\JWT\JWT;
 function envoyer_notification_personnalise(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -81,7 +81,7 @@ function envoyer_notification_personnalise(){
 function envoyer_notification_penlaite(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
 
     $data = json_decode(file_get_contents('php://input'), true);
@@ -286,7 +286,7 @@ function sendPushNotification($token, $title, $body) {
 function envoyer_rappel_cotisation(){
 
     // Vérifier le token utilisateur
-    $decoder = verifier_token();
+    verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -397,7 +397,7 @@ function lister_notification1(){
 function lister_notification() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -454,7 +454,7 @@ function lister_notification() {
 function supprimer_notification() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -476,7 +476,7 @@ function supprimer_notification() {
 function lire_notification() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     
     $data = json_decode(file_get_contents('php://input'), true);
@@ -495,6 +495,3 @@ function lire_notification() {
         send_response(false, "La notification n'a pas été trouvée .");
     }
 }
-
-
-?>

@@ -32,5 +32,3 @@ if(isset($_GET['action'])){
 }else{
     send_response(false, "Aucune action précisée !");
 }
-
-?>

@@ -23,4 +23,3 @@ function send_response($success, $message, $data = null) {
     echo json_encode($response);
     exit; // pour arrêter le script après la réponse
 }
-?>

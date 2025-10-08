@@ -123,4 +123,4 @@ try {
     send_response(false, $e->getMessage());
 }
 send_response(true,"Indice de solvabilité mis à jour");
-?>
+

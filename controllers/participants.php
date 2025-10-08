@@ -126,7 +126,7 @@ function login_participant() {
 function get_profil() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     
     $data = json_decode(file_get_contents("php://input"), true);
@@ -299,10 +299,3 @@ function recupere_tour_actuel() {
 
     exit;
 }
-
-
-
-?>
-
-
-

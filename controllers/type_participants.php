@@ -137,4 +137,3 @@ function supprimer_type_participant(){
         send_response(false, "Erreur : " . $e->getMessage());
     }
 }
-?>

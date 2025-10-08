@@ -50,4 +50,3 @@ if(isset($_GET['action'])){
     send_response(false, "Aucune action précisée !");
 }
 
-?>

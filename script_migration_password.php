@@ -28,5 +28,3 @@ if($nombreMigration>0){
 }else{
     echo 'Une erreur s\'est produite dans le script';
 }
-
-?>

@@ -192,7 +192,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant,$montantC
 function payer_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -317,7 +317,7 @@ function payer_cotisation(){
 function payer_penalite() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -339,15 +339,15 @@ function payer_penalite() {
         $tontine = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$tontine) {
-            throw new Exception("Cette tontine n'existe pas.");
+            throw new UnexpectedValueException("Cette tontine n'existe pas.");
         }
 
         if($tontine['statut']!='Pleine' && $tontine['etat_tontine']!="En cours"){
-            throw new Exception("Vous n'êtes pas autorisé(e) à payer des pénalités pour le moment.");
+            throw new UnexpectedValueException("Vous n'êtes pas autorisé(e) à payer des pénalités pour le moment.");
         }
 
         if ($data['montant'] != $tontine['montant_penalite']) {
-            throw new Exception("Veuillez saisir un montant de pénalité valide.");
+            throw new UnexpectedValueException("Veuillez saisir un montant de pénalité valide.");
         }
 
         
@@ -358,7 +358,7 @@ function payer_penalite() {
         $penalite = $stmtCheck->fetch(PDO::FETCH_ASSOC);
 
         if (!$penalite) {
-            throw new Exception("Aucune pénalité impayée trouvée.");
+            throw new UnexpectedValueException("Aucune pénalité impayée trouvée.");
         }
 
         // Récupérer l'ID du mode de paiement
@@ -367,7 +367,7 @@ function payer_penalite() {
         $idModepai = $stmt1->fetch(PDO::FETCH_ASSOC);
 
         if (!$idModepai) {
-            throw new Exception("Mode de paiement non pris en charge !");
+            throw new UnexpectedValueException("Mode de paiement non pris en charge !");
         }
 
         // Mise à jour de la pénalité
@@ -393,7 +393,7 @@ function payer_penalite() {
         $maj=$pdo->prepare("UPDATE wallet_tontine SET solde_tontine=? WHERE code_tontine=?");
         $maj->execute([$nouveauSolde,$data['code_tontine']]);
         if($maj->rowCount()==0){
-            throw new Exception( "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
+            throw new UnexpectedValueException( "Une erreur s'est produite lors de la mis à jour du solde de la tontine");
         }
 
         $pdo->commit();
@@ -411,7 +411,7 @@ function voir_mes_cotisations(){
 
     
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
 
     $data=json_decode(file_get_contents('php://input'),true);
@@ -448,7 +448,7 @@ function voir_mes_cotisations(){
 function voir_mes_penalites(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
 
     $data=json_decode(file_get_contents('php://input'),true);
@@ -484,7 +484,7 @@ function voir_mes_penalites(){
 function total_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
 
     $data=json_decode(file_get_contents('php://input'),true);
@@ -507,7 +507,7 @@ function total_cotisation(){
 function total_penalite(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -525,4 +525,3 @@ function total_penalite(){
     }
     send_response(true,"Vous avez cotisé au total: ",$totalPenalite['total_penalite']);
 }
-?>

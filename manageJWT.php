@@ -74,6 +74,3 @@ function verifier_token(){
         send_response(false,"Token invalide");
     }
 }
-
-
-?>

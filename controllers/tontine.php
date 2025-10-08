@@ -824,6 +824,3 @@ function retrait() {
         send_response(false, $e->getMessage());
     }
 }
-
-
-?>

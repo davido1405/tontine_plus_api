@@ -177,4 +177,3 @@ function supprimer_type_tontine(){
         send_response(false, "Erreur : " . $e->getMessage());
     }
 }
-?>

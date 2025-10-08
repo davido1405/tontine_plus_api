@@ -174,4 +174,3 @@ function lister_participation(){
         send_repsonse(false,"Vous ne participer à aucune tontine actuellement");
     }
 }
-?>
