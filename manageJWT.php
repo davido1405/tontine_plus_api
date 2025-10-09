@@ -64,8 +64,8 @@ function verifier_token(){
     $jwt = trim($matches[1]);
 
     try {
-        $decoder = JWT::decode($jwt, new Key($secret_code, "HS256"));
-        return $decoder;
+        $decodeur = JWT::decode($jwt, new Key($secret_code, "HS256"));
+        return $decodeur;
     } catch (\Firebase\JWT\ExpiredException $e) {
         http_response_code(401);
         send_response(false,"Votre session a expiré, veuillez vous reconnecter !");
