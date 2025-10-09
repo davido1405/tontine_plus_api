@@ -52,10 +52,7 @@ function envoyer_notification_personnalise(){
     $date_envoie = date("Y-m-d H:i:s");
 
     // Enregistrement de la notification au participant ciblé
-        $stmt = $pdo->prepare("
-            INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
-            VALUES (?, ?, ?, ?, ?)
-        ");
+        $stmt = $pdo->prepare("INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine) VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([
             $contenu,
             $participant['code_participant'],
@@ -296,6 +293,8 @@ function envoyer_rappel_cotisation(){
 
     $pdo = getDB();
 
+    $pdo->beginTransaction();
+
     // Vérifier que la tontine est en cours et avec des tours générés
     $stmtTontine = $pdo->prepare("SELECT statut, etat_tontine, montant_cotisation FROM tontine WHERE code_tontine=?");
     $stmtTontine->execute([$data['code_tontine']]);
@@ -318,12 +317,7 @@ function envoyer_rappel_cotisation(){
     }
 
     // Récupérer les participants
-    $stmtParticipe = $pdo->prepare("
-        SELECT p.code_participant, w.fcm_token 
-        FROM participer p
-        INNER JOIN participants w ON w.code_participant = p.code_participant
-        WHERE p.code_tontine = ?
-    ");
+    $stmtParticipe = $pdo->prepare("SELECT p.code_participant, w.fcm_token FROM participer p INNER JOIN participants w ON w.code_participant = p.code_participant WHERE p.code_tontine = ?");
     $stmtParticipe->execute([$data['code_tontine']]);
     $participants = $stmtParticipe->fetchAll(PDO::FETCH_ASSOC);
 
@@ -336,10 +330,7 @@ function envoyer_rappel_cotisation(){
         $contenu = "Pensez à payer votre cotisation de ".$tontine['montant_cotisation']." FCFA. Merci !";
 
         // Enregistrer en BDD
-        $stmt = $pdo->prepare("
-            INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)
-            VALUES (?, ?, ?, ?, ?)
-        ");
+        $stmt = $pdo->prepare("INSERT INTO notifications (contenu_notification, code_participant, date_envoie, id_type_notification, code_tontine)VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([
             $contenu,
             $participant['code_participant'],
@@ -355,7 +346,9 @@ function envoyer_rappel_cotisation(){
         }
     }
 
+
     if ($succes > 0) {
+        $pdo->commit();
         send_response(true, "Rappel de cotisation envoyé à $succes participant(s).");
     } else {
         send_response(false, "Impossible d'envoyer les rappels de cotisation.");

@@ -401,7 +401,7 @@ function listeParticipants(){
 
 function lister_tour($code_tontine=null,$relancer=false){
     // Vérifier le token utilisateur avant tout
-    $decoder = verifier_token();
+    verifier_token();
 
     // Récupération des données JSON uniquement si $code_tontine non fourni
     if ($code_tontine === null) {
@@ -509,11 +509,12 @@ function lister_tour($code_tontine=null,$relancer=false){
         }
 
         $pdo->commit();
-        
-        return ["success" => true, "message" => "Relance effectuée avec succès !"];;
+        send_response(true,"Relance effectuée avec succès !");
     } catch (\Throwable $th) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
-        return ["success" => false, "message" => $th->getMessage()];
+        if ($pdo->inTransaction()){
+            $pdo->rollBack();
+            send_response(false,"Erreur");
+        }
     }
 }
 
@@ -661,10 +662,10 @@ function ordrePaiement() {
 
 
 //Faire un retrait
-function retrait() {
+function retrait(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    verifier_token();
 
 
     $data = json_decode(file_get_contents("php://input"), true);
