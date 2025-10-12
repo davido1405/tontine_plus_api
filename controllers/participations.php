@@ -6,6 +6,87 @@ require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/../manageJWT.php';
 use Firebase\JWT\JWT;
 
+//Vérifier que le niveau de KYC du participant est conforme aux transactions qui seront générer dans la tontine à laquelle il veut participer
+function verifier_kyc($code_participant,$nombre_participant,$frequence_cotisation,$frequence_paiement,$montant_cotisation){
+
+
+    $pdo=getDB();
+
+    //Récupérer le niveau KYC de l'utilisateur
+    $stmt=$pdo->prepare("SELECT p.id_niveau_kyc,n.transaction_journaliere,n.solde_maximal FROM participants as p INNER JOIN niveau_kyc as n ON n.id_niveau_kyc=p.id_niveau_kyc WHERE p.code_participant=?");
+    $stmt->execute([$code_participant]);
+    $niveau_utilisateur=$stmt->fetch(PDO::FETCH_ASSOC);
+
+    // 🚨 Vérifier que le résultat est bien un tableau
+    if (!$niveau_utilisateur || !is_array($niveau_utilisateur)) {
+        error_log("⚠️ Aucun niveau KYC trouvé pour le participant $code_participant");
+        return false;
+    }
+
+    $transaction_max = (float)$niveau_utilisateur['transaction_journaliere'];
+    $solde_max = (float)$niveau_utilisateur['solde_maximal'];
+
+    // 🔹 1. Déterminer la durée du tour (selon la fréquence de paiement = fréquence des gains)
+    switch ($frequence_paiement) {
+        case "Hebdomadaire":
+            $duree_tour= 7; //7 Jours
+            break;
+        case "Mensuelle":
+            $duree_tour = 30; // 30 jours
+            break;
+        case "Trimestrielle":
+            $duree_tour = 90; // 90 jours
+            break;
+        default:
+            $duree_tour = 7; // 7 jours par défaut, éviter erreur
+    }
+
+    // 🔹 2. Déterminer la fréquence de cotisation en jours
+    switch ($frequence_cotisation) {
+        case "Journalière":
+            $nombre_cotisation=$duree_tour; //1 cotisation par jour
+            break;
+        case "Hebdomadaire":
+            $nombre_cotisation = ceil($duree_tour/7); // 1 cotisation par semaine
+            break;
+        case "Mensuelle":
+            $nombre_cotisation = ceil($duree_tour/30); // 1 cotisation par mois
+            break;
+        default:
+            $nombre_cotisation = $duree_tour; // par défaut, une cotisation par jour
+    }
+
+    //Montant total reçu par le participant
+    $volume_transaction=$nombre_participant*$montant_cotisation*$nombre_cotisation;
+
+    //Transaction journalière pour chaque participant
+    $transaction_journaliere=$montant_cotisation;
+
+    //Comparaison
+    if($transaction_journaliere>$transaction_max || $volume_transaction>$solde_max){
+        
+        $details="Tentative d'adhésion ou de création d'une tontine avec un Niveau KYC insuffisant";
+        
+        $stmt = $pdo->prepare("
+            INSERT INTO kyc_logs (
+                code_participant, 
+                action, 
+                details, 
+                date_action
+            ) VALUES (?, ?, ?, NOW())
+        ");
+        $stmt->execute([
+            $code_participant,
+            'ADHESION/CREATION_TONTINE',
+            $details
+        ]);
+        
+        return false;
+
+    }
+    return true;
+}
+
 
 function ajouter_participation() {
 
@@ -23,7 +104,7 @@ function ajouter_participation() {
         $pdo->beginTransaction();
 
         // 🔒 Verrouiller la tontine
-        $stmt = $pdo->prepare("SELECT * FROM tontine WHERE code_tontine = ? FOR UPDATE");
+        $stmt = $pdo->prepare("SELECT t.*,f.libelle_frequence,r.libelle_frequence_paiement FROM tontine as t INNER JOIN frequence as f ON f.id_frequence=t.id_frequence INNER JOIN frequence_paiement as r ON t.id_frequence_paiement=r.id_frequence_paiement WHERE t.code_tontine = ? FOR UPDATE");
         $stmt->execute([$data['code_tontine']]);
         $isTontine = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -59,6 +140,20 @@ function ajouter_participation() {
         if ((int)$stmt->fetchColumn() > 0) {
             $pdo->rollBack();
             send_response(false, "Vous êtes déjà inscrit dans une autre tontine !");
+        }
+
+        //Formater les parametres pour la verification
+        $code_participant=$data['code_participant'];
+        $nombre_participant=$isTontine['nombre_participant'];
+        $frequence_cotisation=$isTontine['libelle_frequence'];
+        $frequence_paiement=$isTontine['libelle_frequence_paiement'];
+        $montant_cotisation=$isTontine['montant_cotisation'];
+        //Vérifier le niveau kyc
+        $verifier=verifier_kyc($code_participant,$nombre_participant,$frequence_cotisation,$frequence_paiement,$montant_cotisation);
+
+        if(!$verifier){
+            $pdo->rollBack();
+            send_response(false, "Votre niveau de vérification est insuffisant pour réjoindre cette tontine. Veuillez fournir des informations supplémentaire à votre identification. Merci");
         }
 
         // ✅ Insertion du participant

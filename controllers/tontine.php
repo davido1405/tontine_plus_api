@@ -4,6 +4,8 @@ include_once __DIR__ . '/../config/config.php';
 
 include_once __DIR__ . '/notifications.php';
 
+include_once __DIR__ . '/participations.php';
+
 include_once __DIR__ . '/../helpers/responses.php';
 
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -37,7 +39,7 @@ function code_wallet(){
 function create_tontine(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    //$decoder=verifier_token();
 
     $data = json_decode(file_get_contents("php://input"), true);
 
@@ -86,6 +88,20 @@ function create_tontine(){
 
         if($organiseDeja){
             throw new Exception("Vous ne pouvez organiser que une tontine à la fois");
+        }
+
+        //Formater les parametres pour la verification
+        $code_participant=$data['code_participant'];
+        $nombre_participant=$data['nombre_participant'];
+        $frequence_cotisation_libelle=$data['frequence'];
+        $frequence_paiement_libelle=$data['frequence_paiement'];
+        $montant_cotisation=$data['montant_cotisation'];
+        //Vérifier le niveau kyc
+        $verifier=verifier_kyc($code_participant,$nombre_participant,$frequence_cotisation_libelle,$frequence_paiement_libelle,$montant_cotisation);
+
+        if(!$verifier){
+            $pdo->rollBack();
+            send_response(false, "Votre niveau de vérification est insuffisant pour réjoindre cette tontine. Veuillez fournir des informations supplémentaire à votre identification. Merci");
         }
 
         //Ajout de la tontine
@@ -570,7 +586,7 @@ function transactions(){
             'Cotisation' AS type_transaction,
             m.libelle_mode_paiement AS mode_paiement,
             s.libelle_statut_paiement AS statut
-        FROM cotisations c INNER JOIN participants as p ON p.code_participant=c.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=c.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=c.id_statut_paiement WHERE c.code_tontine=?
+        FROM cotisations c INNER JOIN participants as p ON p.code_participant=c.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=c.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=c.id_statut_paiement WHERE c.code_tontine=? ORDER BY date_transaction ASC;
 
         UNION ALL
 
@@ -584,7 +600,7 @@ function transactions(){
             s.libelle_statut_paiement AS statut
         FROM paiement_tour e INNER JOIN participants as p ON p.code_participant=e.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=e.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=e.id_statut_paiement WHERE e.code_tontine=?
         
-        ORDER BY date_transaction DESC;
+        ORDER BY date_transaction ASC;
         ");
     $stmt->execute([$data['code_tontine'],$data['code_tontine']]);
     $resultats=$stmt->fetchAll(PDO::FETCH_ASSOC);

@@ -423,7 +423,7 @@ function voir_mes_cotisations(){
     $pdo=getDB();
 
     //Recupérer la date de la dernière cotisation
-    $stmt1=$pdo->prepare("SELECT c.code_cotisation, c.code_tontine, c.code_participant,c.montant,c.date_paiement,m.libelle_mode_paiement,s.libelle_statut_paiement FROM cotisations c INNER JOIN mode_paiement as m ON c.id_mode_paiement=m.id_mode_paiement INNER JOIN status_paiement as s ON c.id_statut_paiement=s.id_statut_paiement WHERE code_participant=? AND code_tontine=? ORDER BY date_paiement DESC ");
+    $stmt1=$pdo->prepare("SELECT c.code_cotisation, c.code_tontine, c.code_participant,c.montant,c.nombre_tour_avance,c.date_paiement,m.libelle_mode_paiement,s.libelle_statut_paiement FROM cotisations c INNER JOIN mode_paiement as m ON c.id_mode_paiement=m.id_mode_paiement INNER JOIN status_paiement as s ON c.id_statut_paiement=s.id_statut_paiement WHERE code_participant=? AND code_tontine=? ORDER BY date_paiement DESC");
     $stmt1->execute([$data['code_participant'],$data['code_tontine']]);
     $cotisations=$stmt1->fetchAll(PDO::FETCH_ASSOC);
 
@@ -436,6 +436,7 @@ function voir_mes_cotisations(){
         $formated[]=[
             "code_cotisation"=>$cotisation['code_cotisation'],
             "montant"=>$cotisation['montant'],
+            "nombre_tour_avance"=>$cotisation['nombre_tour_avance'],
             "date_paiement"=>$cotisation['date_paiement'],
             "mode_paiement"=>$cotisation['libelle_mode_paiement'],
             "statut_paiement"=>$cotisation['libelle_statut_paiement']
