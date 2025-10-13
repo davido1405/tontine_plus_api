@@ -7,65 +7,98 @@ require_once __DIR__ . '/../manageJWT.php';
 use Firebase\JWT\JWT;
 
 //Vérifier que le niveau de KYC du participant est conforme aux transactions qui seront générer dans la tontine à laquelle il veut participer
-function verifier_kyc($code_participant,$nombre_participant,$frequence_cotisation,$frequence_paiement,$montant_cotisation){
+function verifier_kyc($code_participant, $nombre_participant, $frequence_cotisation, $frequence_paiement, $montant_cotisation) {
+    $pdo = getDB();
 
-
-    $pdo=getDB();
-
-    //Récupérer le niveau KYC de l'utilisateur
-    $stmt=$pdo->prepare("SELECT p.id_niveau_kyc,n.transaction_journaliere,n.solde_maximal FROM participants as p INNER JOIN niveau_kyc as n ON n.id_niveau_kyc=p.id_niveau_kyc WHERE p.code_participant=?");
+    $stmt = $pdo->prepare("
+        SELECT 
+            p.id_niveau_kyc,
+            n.transaction_journaliere,
+            n.solde_maximal,
+            n.facteur_membre,
+            n.solde_max_absolu,              -- ← AJOUT
+            n.nombre_max_participants        -- ← AJOUT
+        FROM participants as p 
+        INNER JOIN niveau_kyc as n ON n.id_niveau_kyc = p.id_niveau_kyc 
+        WHERE p.code_participant = ?
+    ");
     $stmt->execute([$code_participant]);
-    $niveau_utilisateur=$stmt->fetch(PDO::FETCH_ASSOC);
+    $niveau_utilisateur = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // 🚨 Vérifier que le résultat est bien un tableau
     if (!$niveau_utilisateur || !is_array($niveau_utilisateur)) {
         error_log("⚠️ Aucun niveau KYC trouvé pour le participant $code_participant");
         return false;
     }
 
     $transaction_max = (float)$niveau_utilisateur['transaction_journaliere'];
-    $solde_max = (float)$niveau_utilisateur['solde_maximal'];
+    $solde_max_base = (float)$niveau_utilisateur['solde_maximal'];
+    $facteur_membre = (float)$niveau_utilisateur['facteur_membre'];
+    $solde_max_absolu = (float)$niveau_utilisateur['solde_max_absolu'];
+    $nombre_max_participants = (int)$niveau_utilisateur['nombre_max_participants'];
 
-    // 🔹 1. Déterminer la durée du tour (selon la fréquence de paiement = fréquence des gains)
+    // 🔒 VÉRIFICATION 1 : Nombre maximum de participants
+    if ($nombre_participant > $nombre_max_participants) {
+        $details = "Tentative de créer une tontine avec $nombre_participant membres (max autorisé: $nombre_max_participants pour ce niveau KYC)";
+        
+        $stmt = $pdo->prepare("
+            INSERT INTO kyc_logs (
+                code_participant, 
+                action, 
+                details, 
+                date_action
+            ) VALUES (?, ?, ?, NOW())
+        ");
+        $stmt->execute([
+            $code_participant,
+            'DEPASSEMENT_NOMBRE_PARTICIPANTS',
+            $details
+        ]);
+        
+        return false;
+    }
+
+    // 🧮 Calcul du solde ajusté avec facteur
+    $solde_max_ajuste = $solde_max_base * (1 + ($nombre_participant - 1) * ($facteur_membre - 1));
+
+    // 🔒 VÉRIFICATION 2 : Plafond absolu (protection anti-multiplication)
+    $solde_max_final = min($solde_max_ajuste, $solde_max_absolu);
+
+    // Calculs de fréquence (inchangés)
     switch ($frequence_paiement) {
         case "Hebdomadaire":
-            $duree_tour= 7; //7 Jours
+            $duree_tour = 7;
             break;
         case "Mensuelle":
-            $duree_tour = 30; // 30 jours
+            $duree_tour = 30;
             break;
         case "Trimestrielle":
-            $duree_tour = 90; // 90 jours
+            $duree_tour = 90;
             break;
         default:
-            $duree_tour = 7; // 7 jours par défaut, éviter erreur
+            $duree_tour = 7;
     }
 
-    // 🔹 2. Déterminer la fréquence de cotisation en jours
     switch ($frequence_cotisation) {
         case "Journalière":
-            $nombre_cotisation=$duree_tour; //1 cotisation par jour
+            $nombre_cotisation = $duree_tour;
             break;
         case "Hebdomadaire":
-            $nombre_cotisation = ceil($duree_tour/7); // 1 cotisation par semaine
+            $nombre_cotisation = ceil($duree_tour / 7);
             break;
         case "Mensuelle":
-            $nombre_cotisation = ceil($duree_tour/30); // 1 cotisation par mois
+            $nombre_cotisation = ceil($duree_tour / 30);
             break;
         default:
-            $nombre_cotisation = $duree_tour; // par défaut, une cotisation par jour
+            $nombre_cotisation = $duree_tour;
     }
 
-    //Montant total reçu par le participant
-    $volume_transaction=$nombre_participant*$montant_cotisation*$nombre_cotisation;
+    $volume_transaction = $nombre_participant * $montant_cotisation * $nombre_cotisation;
+    $transaction_journaliere = $montant_cotisation;
 
-    //Transaction journalière pour chaque participant
-    $transaction_journaliere=$montant_cotisation;
-
-    //Comparaison
-    if($transaction_journaliere>$transaction_max || $volume_transaction>$solde_max){
+    // 🔒 VÉRIFICATION FINALE
+    if ($transaction_journaliere > $transaction_max || $volume_transaction > $solde_max_final) {
         
-        $details="Tentative d'adhésion ou de création d'une tontine avec un Niveau KYC insuffisant";
+        $details = "Limites: Transaction=$transaction_journaliere/$transaction_max FCFA, Volume=$volume_transaction/$solde_max_final FCFA (ajusté: $solde_max_ajuste, plafond: $solde_max_absolu) pour $nombre_participant membres";
         
         $stmt = $pdo->prepare("
             INSERT INTO kyc_logs (
@@ -82,8 +115,8 @@ function verifier_kyc($code_participant,$nombre_participant,$frequence_cotisatio
         ]);
         
         return false;
-
     }
+    
     return true;
 }
 

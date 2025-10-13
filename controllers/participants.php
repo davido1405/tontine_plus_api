@@ -46,6 +46,7 @@ function register_participant() {
             "numero"=>$data['mobile'],
             "code_tontine"=>$data['code_tontine'] ?? "default code",
             "type"=>$data['type'] ?? "Participant",
+            "niveau_kyc"=>"KYC1",
             "jwt_token"=>$token
         ]);
     } catch (PDOException $e) {
