@@ -14,9 +14,7 @@ function verifier_kyc($code_participant, $nombre_participant, $frequence_cotisat
         SELECT 
             p.id_niveau_kyc,
             n.transaction_journaliere,
-            n.solde_maximal,
-            n.facteur_membre,
-            n.solde_max_absolu,              -- ← AJOUT
+            n.solde_maximal,             -- ← AJOUT
             n.nombre_max_participants        -- ← AJOUT
         FROM participants as p 
         INNER JOIN niveau_kyc as n ON n.id_niveau_kyc = p.id_niveau_kyc 
@@ -32,8 +30,6 @@ function verifier_kyc($code_participant, $nombre_participant, $frequence_cotisat
 
     $transaction_max = (float)$niveau_utilisateur['transaction_journaliere'];
     $solde_max_base = (float)$niveau_utilisateur['solde_maximal'];
-    $facteur_membre = (float)$niveau_utilisateur['facteur_membre'];
-    $solde_max_absolu = (float)$niveau_utilisateur['solde_max_absolu'];
     $nombre_max_participants = (int)$niveau_utilisateur['nombre_max_participants'];
 
     // 🔒 VÉRIFICATION 1 : Nombre maximum de participants
@@ -56,12 +52,6 @@ function verifier_kyc($code_participant, $nombre_participant, $frequence_cotisat
         
         return false;
     }
-
-    // 🧮 Calcul du solde ajusté avec facteur
-    $solde_max_ajuste = $solde_max_base * (1 + ($nombre_participant - 1) * ($facteur_membre - 1));
-
-    // 🔒 VÉRIFICATION 2 : Plafond absolu (protection anti-multiplication)
-    $solde_max_final = min($solde_max_ajuste, $solde_max_absolu);
 
     // Calculs de fréquence (inchangés)
     switch ($frequence_paiement) {
@@ -96,9 +86,9 @@ function verifier_kyc($code_participant, $nombre_participant, $frequence_cotisat
     $transaction_journaliere = $montant_cotisation;
 
     // 🔒 VÉRIFICATION FINALE
-    if ($transaction_journaliere > $transaction_max || $volume_transaction > $solde_max_final) {
+    if ($transaction_journaliere > $transaction_max || $volume_transaction > $solde_max_base) {
         
-        $details = "Limites: Transaction=$transaction_journaliere/$transaction_max FCFA, Volume=$volume_transaction/$solde_max_final FCFA (ajusté: $solde_max_ajuste, plafond: $solde_max_absolu) pour $nombre_participant membres";
+        $details = "Limites: Transaction=$transaction_journaliere/$transaction_max FCFA, Volume=$volume_transaction/$solde_max_base FCFA pour $nombre_participant membres";
         
         $stmt = $pdo->prepare("
             INSERT INTO kyc_logs (

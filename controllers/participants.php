@@ -303,286 +303,149 @@ function recupere_tour_actuel() {
     exit;
 }
 
-function verifier_mon_compte() {
-    // Vérifier le token de session
+function demande_upgrade_kyc() {
+    // Vérifier le token
     $decoder = verifier_token();
 
-    // Récupérer les données envoyées
-    $data = json_decode(file_get_contents('php://input'), true);
-
-    // 🔹 ÉTAPE 1 : Validation des données d'entrée
-    $champs_requis = [
-        'code_participant',
-        'type_document',
-        'numero_document',
-        'fichier_document_recto',
-        'selfie_photo'
-    ];
+    // --- 🔹 Étape 1 : Validation des champs de formulaire (envoyés via Multipart) ---
+    $champs_requis = ['code_participant', 'type_document', 'numero_document'];
 
     foreach ($champs_requis as $champ) {
-        if (!isset($data[$champ]) || empty(trim($data[$champ]))) {
-            send_response(false, "Veuillez remplir tous les champs obligatoires.");
+        if (!isset($_POST[$champ]) || empty(trim($_POST[$champ]))) {
+            send_response(false, "Le champ '$champ' est obligatoire.");
         }
     }
 
-    // Validation du numéro de document
-    $numero_document = trim($data['numero_document']);
-    if (strlen($numero_document) < 5) {
-        send_response(false, "Le numéro de document doit contenir au moins 5 caractères.");
+    $code_participant = trim($_POST['code_participant']);
+    $type_document = trim($_POST['type_document']);
+    $numero_document = trim($_POST['numero_document']);
+
+    // --- 🔹 Étape 2 : Validation des fichiers ---
+    if (!isset($_FILES['fichier_document_recto'])) {
+        send_response(false, "Le fichier recto est requis.");
     }
 
-    // 🔹 VALIDATION DES FICHIERS
-    
-    // Validation du recto (obligatoire)
-    if (!preg_match('/^data:image\/(jpeg|jpg|png);base64,/', $data['fichier_document_recto'])) {
-        send_response(false, "Le format du fichier recto est invalide. Utilisez JPEG ou PNG.");
+    if (!isset($_FILES['selfie_photo'])) {
+        send_response(false, "La photo selfie est requise.");
     }
 
-    // Validation du verso (si fourni)
-    $verso_fourni = isset($data['fichier_document_verso']) && !empty($data['fichier_document_verso']);
-    
-    if ($verso_fourni) {
-        if (!preg_match('/^data:image\/(jpeg|jpg|png);base64,/', $data['fichier_document_verso'])) {
-            send_response(false, "Le format du fichier verso est invalide. Utilisez JPEG ou PNG.");
+    $verso_fourni = isset($_FILES['fichier_document_verso']);
+
+    $allowed_types = [
+    'image/jpeg', 'image/pjpeg', 'image/jpg',
+    'image/png', 'image/x-png'];
+
+    $max_size = 5 * 1024 * 1024; // 5MB
+
+    $upload_dir = __DIR__ . "/../uploads/documents_kyc/".$code_participant."/"; // 📁 adapte ce chemin selon ta structure
+    if (!file_exists($upload_dir)) {
+        mkdir($upload_dir, 0755, true);
+    }
+
+    // Fonction utilitaire
+    function enregistrer_image($file, $prefix, $upload_dir, $allowed_types, $max_size) {
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception("Erreur de téléchargement pour le fichier " . $file['name']);
         }
-    }
 
-    // Validation du selfie (obligatoire)
-    if (!preg_match('/^data:image\/(jpeg|jpg|png);base64,/', $data['selfie_photo'])) {
-        send_response(false, "Le format du selfie est invalide. Utilisez JPEG ou PNG.");
-    }
-
-    // 🔹 VÉRIFICATION DE LA TAILLE DES FICHIERS
-    $max_size = 5 * 1024 * 1024; // 5 MB en octets
-
-    // Taille du recto
-    $fichier_recto_size = strlen(base64_decode(
-        preg_replace('/^data:image\/\w+;base64,/', '', $data['fichier_document_recto'])
-    ));
-
-    if ($fichier_recto_size > $max_size) {
-        send_response(false, "Le fichier recto ne doit pas dépasser 5 MB (" . 
-            round($fichier_recto_size / 1024 / 1024, 2) . " MB fourni)."
-        );
-    }
-
-    // Taille du verso (si fourni)
-    if ($verso_fourni) {
-        $fichier_verso_size = strlen(base64_decode(
-            preg_replace('/^data:image\/\w+;base64,/', '', $data['fichier_document_verso'])
-        ));
-
-        if ($fichier_verso_size > $max_size) {
-            send_response(false, "Le fichier verso ne doit pas dépasser 5 MB (" . 
-                round($fichier_verso_size / 1024 / 1024, 2) . " MB fourni)."
-            );
+        if ($file['size'] > $max_size) {
+            throw new Exception("Le fichier " . $file['name'] . " dépasse la taille maximale de 5MB");
         }
+
+        // Vérification du type réel de l'image
+        $info = getimagesize($file['tmp_name']);
+        if (!$info) {
+            throw new Exception("Le fichier " . $file['name'] . " n'est pas une image valide.");
+        }
+
+        // Types acceptés
+        $allowed_types = ['image/jpeg', 'image/png']; // pas besoin de 'image/jpg', getimagesize renvoie 'image/jpeg'
+        if (!in_array($info['mime'], $allowed_types)) {
+            throw new Exception("Format non supporté pour " . $file['name'] . " (JPEG ou PNG requis)");
+        }
+
+        // Extension correcte
+        $ext = ($info['mime'] === 'image/png') ? 'png' : 'jpg';
+        $filename = $prefix . "_" . uniqid() . "." . $ext;
+        $destination = $upload_dir . $filename;
+
+        if (!move_uploaded_file($file['tmp_name'], $destination)) {
+            throw new Exception("Impossible d’enregistrer le fichier " . $file['name']);
+        }
+
+        return "uploads/documents_kyc/" . $code_participant . "/" . $filename;
     }
 
-    // Taille du selfie
-    $selfie_size = strlen(base64_decode(
-        preg_replace('/^data:image\/\w+;base64,/', '', $data['selfie_photo'])
-    ));
 
-    if ($selfie_size > $max_size) {
-        send_response(false, "Le fichier selfie ne doit pas dépasser 5 MB (" . 
-            round($selfie_size / 1024 / 1024, 2) . " MB fourni)."
-        );
-    }
-
-    $pdo = null;
-
+    $pdo=null;
     try {
+        // Enregistrer les fichiers sur le serveur
+        $path_recto = enregistrer_image($_FILES['fichier_document_recto'], "recto", $upload_dir, $allowed_types, $max_size);
+        $path_selfie = enregistrer_image($_FILES['selfie_photo'], "selfie", $upload_dir, $allowed_types, $max_size);
+        $path_verso = $verso_fourni 
+            ? enregistrer_image($_FILES['fichier_document_verso'], "verso", $upload_dir, $allowed_types, $max_size)
+            : null;
+
+        // --- 🔹 Étape 3 : Vérifications de cohérence ---
         $pdo = getDB();
+
         $pdo->beginTransaction();
 
-        // 🔹 ÉTAPE 2 : Vérifier l'existence du participant
-        $stmt = $pdo->prepare("
-            SELECT p.*, n.libelle as niveau_actuel 
-            FROM participants as p
-            LEFT JOIN niveau_kyc as n ON p.id_niveau_kyc = n.id_niveau_kyc
-            WHERE p.code_participant = ?
-        ");
-        $stmt->execute([$data['code_participant']]);
-        $participant = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$participant) {
+        // Vérifier l'existence du participant
+        $stmt = $pdo->prepare("SELECT * FROM participants WHERE code_participant=?");
+        $stmt->execute([$code_participant]);
+        if (!$stmt->fetch()) {
             $pdo->rollBack();
-            send_response(false, "Session invalide. Veuillez vous reconnecter.");
+            send_response(false, "Participant introuvable !");
         }
 
-        // 🔹 ÉTAPE 3 : Vérifier le type de document
-        $stmt = $pdo->prepare("
-            SELECT * FROM type_document_kyc 
-            WHERE libelle_type_document = ?
-        ");
-        $stmt->execute([$data['type_document']]);
+        // Vérifier le type de document
+        $stmt = $pdo->prepare("SELECT id_type_document FROM type_document_kyc WHERE libelle_type_document=?");
+        $stmt->execute([$type_document]);
         $type_doc = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$type_doc) {
             $pdo->rollBack();
-            send_response(false, "Veuillez sélectionner un type de document valide.");
+            send_response(false, "Type de document invalide.");
         }
 
-        // 🔹 ÉTAPE 4 : Vérifier si verso est requis pour ce type de document
-        $documents_recto_verso = ['CNI', 'Carte d\'identité', 'Permis de conduire', 'Titre de séjour'];
-        $verso_requis = in_array($data['type_document'], $documents_recto_verso);
-
-        if ($verso_requis && !$verso_fourni) {
+        // --- 🔹 Étape 4 : Vérifier les demandes en attente ---
+        $stmt = $pdo->prepare("SELECT * FROM document_kyc 
+                               WHERE code_participant=? 
+                               AND statut_validation='En attente' 
+                               AND DATEDIFF(NOW(), date_soumission)<=7");
+        $stmt->execute([$code_participant]);
+        if ($stmt->fetch()) {
             $pdo->rollBack();
-            send_response(false, 
-                "Le document '" . $data['type_document'] . "' nécessite une photo recto ET verso. " .
-                "Veuillez fournir les deux faces du document."
-            );
+            send_response(false, "Vous avez déjà une demande de vérification en cours.");
         }
 
-        // 🔹 ÉTAPE 5 : Vérifier les demandes existantes
-        
-        // Vérifier si une demande est en attente (dans les 7 jours)
-        $stmt = $pdo->prepare("
-            SELECT * FROM document_kyc 
-            WHERE code_participant = ? 
-            AND statut_validation = 'En attente' 
-            AND DATEDIFF(NOW(), date_soumission) <= 7
-            ORDER BY date_soumission DESC 
-            LIMIT 1
-        ");
-        $stmt->execute([$data['code_participant']]);
-        $demandeEnCours = $stmt->fetch(PDO::FETCH_ASSOC);
+        // --- 🔹 Étape 5 : Enregistrer la demande ---
+        $sql = $verso_fourni ? 
+            "INSERT INTO document_kyc(code_participant,id_type_document,numero_document,fichier_document_recto,fichier_document_verso,fichier_selfie,statut_validation,date_soumission)
+             VALUES(?,?,?,?,?,?, 'En attente', NOW())" :
+            "INSERT INTO document_kyc(code_participant,id_type_document,numero_document,fichier_document_recto,fichier_selfie,statut_validation,date_soumission)
+             VALUES(?,?,?,?, 'En attente', NOW())";
 
-        if ($demandeEnCours) {
-            $pdo->rollBack();
-            send_response(false, 
-                "Vous avez déjà une demande de vérification en cours de traitement " .
-                "(soumise le " . date('d/m/Y', strtotime($demandeEnCours['date_soumission'])) . "). " .
-                "Veuillez patienter, vous recevrez un SMS de confirmation sous peu."
-            );
-        }
+        $params = $verso_fourni ?
+            [$code_participant, $type_doc['id_type_document'], $numero_document, $path_recto, $path_verso, $path_selfie] :
+            [$code_participant, $type_doc['id_type_document'], $numero_document, $path_recto, $path_selfie];
 
-        // Vérifier le nombre de demandes rejetées récentes (limite abus)
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*) as nb_rejets 
-            FROM document_kyc 
-            WHERE code_participant = ? 
-            AND statut_validation = 'Rejeté' 
-            AND DATEDIFF(NOW(), date_soumission) <= 30
-        ");
-        $stmt->execute([$data['code_participant']]);
-        $nb_rejets = (int) $stmt->fetchColumn();
-
-        if ($nb_rejets >= 3) {
-            $pdo->rollBack();
-            send_response(false, 
-                "Vous avez atteint le nombre maximum de tentatives pour ce mois. " .
-                "Veuillez contacter le support pour assistance."
-            );
-        }
-
-        // 🔹 ÉTAPE 6 : Enregistrer la demande de validation
-        
-        // Construire la requête selon si le verso est fourni ou non
-        if ($verso_fourni) {
-            $stmt = $pdo->prepare("
-                INSERT INTO document_kyc (
-                    code_participant, 
-                    id_type_document, 
-                    numero_document, 
-                    fichier_document_recto,
-                    fichier_document_verso,
-                    selfie_document,
-                    statut_validation,
-                    date_soumission
-                ) VALUES (?, ?, ?, ?, ?, ?, 'En attente', NOW())
-            ");
-            
-            $stmt->execute([
-                $data['code_participant'],
-                $type_doc['id_type_document'],
-                $numero_document,
-                $data['fichier_document_recto'],
-                $data['fichier_document_verso'],
-                $data['selfie_photo']
-            ]);
-        } else {
-            $stmt = $pdo->prepare("
-                INSERT INTO document_kyc (
-                    code_participant, 
-                    id_type_document, 
-                    numero_document, 
-                    fichier_document_recto,
-                    selfie_document,
-                    statut_validation,
-                    date_soumission
-                ) VALUES (?, ?, ?, ?, ?, 'En attente', NOW())
-            ");
-            
-            $stmt->execute([
-                $data['code_participant'],
-                $type_doc['id_type_document'],
-                $numero_document,
-                $data['fichier_document_recto'],
-                $data['selfie_photo']
-            ]);
-        }
-
-        if ($stmt->rowCount() === 0) {
-            $pdo->rollBack();
-            send_response(false, "Une erreur s'est produite lors de l'enregistrement. Veuillez réessayer.");
-        }
-
-        $id_demande = $pdo->lastInsertId();
-
-        // 🔹 ÉTAPE 7 : Logger l'action
-        $details = sprintf(
-            'Type: %s - Numéro: %s - Recto-verso: %s',
-            $data['type_document'],
-            $numero_document,
-            $verso_fourni ? 'Oui' : 'Non'
-        );
-
-        $stmt = $pdo->prepare("
-            INSERT INTO kyc_logs (
-                code_participant, 
-                action, 
-                details, 
-                date_action
-            ) VALUES (?, ?, ?, NOW())
-        ");
-        $stmt->execute([
-            $data['code_participant'],
-            'DEMANDE_VERIFICATION',
-            $details
-        ]);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
 
         $pdo->commit();
 
-        // 🔹 ÉTAPE 8 : Notifications (après commit)
-        
-        // TODO: Envoyer SMS au participant
-        // envoyer_sms($participant['numero_telephone'], 
-        //     "Votre demande de vérification a été reçue. Vous serez notifié du résultat sous 24-48h."
-        // );
-
-        // TODO: Notifier les administrateurs
-        // notifier_admin_nouvelle_demande($id_demande, $data['code_participant']);
-
-        $message_reponse = "✅ Votre demande de vérification a été enregistrée avec succès !\n\n" .
-            "📱 Vous recevrez un SMS de confirmation sous 24 à 48 heures.\n" .
-            "📄 Type de document : " . $data['type_document'] . "\n" .
-            "🆔 Numéro : " . $numero_document . "\n" .
-            "📸 Documents fournis : " . ($verso_fourni ? "Recto, Verso et Selfie" : "Recto et Selfie") . "\n\n" .
-            "Merci de votre patience !";
-
-        send_response(true, $message_reponse, [
-            'id_demande' => $id_demande,
-            'verso_fourni' => $verso_fourni
+        send_response(true, "✅ Votre demande de vérification a été enregistrée avec succès !", [
+            "recto" => $path_recto,
+            "verso" => $path_verso,
+            "selfie" => $path_selfie
         ]);
 
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         if ($pdo && $pdo->inTransaction()) {
             $pdo->rollBack();
         }
-        error_log("Erreur vérification compte : " . $e->getMessage());
-        send_response(false, "Une erreur technique est survenue. Veuillez réessayer ultérieurement.");
+        send_response(false, "Erreur : " . $e->getMessage());
     }
 }

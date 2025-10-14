@@ -31,6 +31,9 @@ if(isset($_GET['action'])){
         case 'recuperer_fcm_token':
             saveFcmToken();
             break;
+        case 'demande_upgrade_kyc':
+            demande_upgrade_kyc();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 
