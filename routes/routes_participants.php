@@ -34,6 +34,9 @@ if(isset($_GET['action'])){
         case 'demande_upgrade_kyc':
             demande_upgrade_kyc();
             break;
+        case 'cotisations_manquees':
+            cotisation_manques();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 

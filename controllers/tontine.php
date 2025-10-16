@@ -598,11 +598,21 @@ function transactions(){
             'Retrait' AS type_transaction,
             m.libelle_mode_paiement AS mode_paiement,
             s.libelle_statut_paiement AS statut
-        FROM paiement_tour e INNER JOIN participants as p ON p.code_participant=e.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=e.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=e.id_statut_paiement WHERE e.code_tontine=?
+        FROM paiement_tour e INNER JOIN participants as p ON p.code_participant=e.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=e.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=e.id_statut_paiement WHERE e.code_tontine=? ORDER BY date_transaction ASC;
         
-        ORDER BY date_transaction ASC;
+        UNION ALL
+
+        SELECT
+            p.nom_participant,
+            p.prenoms_participant,
+            d.montant,
+            d.date_rattrapage AS date_transaction,
+            'Rattrapage' AS type_transaction,
+            m.libelle_mode_paiement AS mode_paiement,
+            s.libelle_statut_paiement AS statut
+        FROM cotisations_manquees d INNER JOIN participants as p ON p.code_participant=d.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=d.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=d.id_statut_paiement WHERE d.code_tontine=? ORDER BY date_transaction ASC;
         ");
-    $stmt->execute([$data['code_tontine'],$data['code_tontine']]);
+    $stmt->execute([$data['code_tontine'],$data['code_tontine'],$data['code_tontine']]);
     $resultats=$stmt->fetchAll(PDO::FETCH_ASSOC);
     if($resultats){
         $transactions=[];

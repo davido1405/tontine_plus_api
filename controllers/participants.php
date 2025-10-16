@@ -303,6 +303,33 @@ function recupere_tour_actuel() {
     exit;
 }
 
+//Récupérer nombre de cotisations manqués
+function cotisation_manques(){
+    // Vérifier le token
+    //$decoder = verifier_token();
+
+    $data=json_decode(file_get_contents('php://input'),true);
+
+    if(!isset($data['code_participant'],$data['code_tontine'])||empty($data['code_participant'])||empty($data['code_tontine'])){
+        send_response(false,"Veuillez vérifier tous les champs");
+    }
+
+    $code_participant=$data['code_participant'];
+    $code_tontine=$data['code_tontine'];
+
+    $pdo=getDB();
+
+    $stmt=$pdo->prepare("SELECT COUNT(*) as total_retards FROM cotisations_manquees WHERE code_tontine=? AND code_participant=? AND id_statut_paiement=?");
+    $stmt->execute([$code_tontine,$code_participant,1]);
+    $retards=$stmt->fetch(PDO::FETCH_ASSOC);
+
+    $total=$retards['total_retards']??0;
+    if($retards){
+        send_response(true,"Vous avez au total",$total);
+    }
+    
+}
+
 function demande_upgrade_kyc() {
     // Vérifier le token
     $decoder = verifier_token();
@@ -331,101 +358,96 @@ function demande_upgrade_kyc() {
 
     $verso_fourni = isset($_FILES['fichier_document_verso']);
 
-    $allowed_types = [
-    'image/jpeg', 'image/pjpeg', 'image/jpg',
-    'image/png', 'image/x-png'];
-
+    $allowed_types = ['image/jpeg', 'image/png'];
     $max_size = 5 * 1024 * 1024; // 5MB
 
-    $upload_dir = __DIR__ . "/../uploads/documents_kyc/".$code_participant."/"; // 📁 adapte ce chemin selon ta structure
-    if (!file_exists($upload_dir)) {
-        mkdir($upload_dir, 0755, true);
-    }
-
-    // Fonction utilitaire
-    function enregistrer_image($file, $prefix, $upload_dir, $allowed_types, $max_size) {
-        if ($file['error'] !== UPLOAD_ERR_OK) {
-            throw new Exception("Erreur de téléchargement pour le fichier " . $file['name']);
-        }
-
-        if ($file['size'] > $max_size) {
-            throw new Exception("Le fichier " . $file['name'] . " dépasse la taille maximale de 5MB");
-        }
-
-        // Vérification du type réel de l'image
-        $info = getimagesize($file['tmp_name']);
-        if (!$info) {
-            throw new Exception("Le fichier " . $file['name'] . " n'est pas une image valide.");
-        }
-
-        // Types acceptés
-        $allowed_types = ['image/jpeg', 'image/png']; // pas besoin de 'image/jpg', getimagesize renvoie 'image/jpeg'
-        if (!in_array($info['mime'], $allowed_types)) {
-            throw new Exception("Format non supporté pour " . $file['name'] . " (JPEG ou PNG requis)");
-        }
-
-        // Extension correcte
-        $ext = ($info['mime'] === 'image/png') ? 'png' : 'jpg';
-        $filename = $prefix . "_" . uniqid() . "." . $ext;
-        $destination = $upload_dir . $filename;
-
-        if (!move_uploaded_file($file['tmp_name'], $destination)) {
-            throw new Exception("Impossible d’enregistrer le fichier " . $file['name']);
-        }
-
-        return "uploads/documents_kyc/" . $code_participant . "/" . $filename;
-    }
-
-
-    $pdo=null;
+    // --- 🔹 Étape 3 : Vérifications de cohérence AVANT upload ---
+    $pdo = null;
     try {
-        // Enregistrer les fichiers sur le serveur
-        $path_recto = enregistrer_image($_FILES['fichier_document_recto'], "recto", $upload_dir, $allowed_types, $max_size);
-        $path_selfie = enregistrer_image($_FILES['selfie_photo'], "selfie", $upload_dir, $allowed_types, $max_size);
-        $path_verso = $verso_fourni 
-            ? enregistrer_image($_FILES['fichier_document_verso'], "verso", $upload_dir, $allowed_types, $max_size)
-            : null;
-
-        // --- 🔹 Étape 3 : Vérifications de cohérence ---
         $pdo = getDB();
 
-        $pdo->beginTransaction();
-
-        // Vérifier l'existence du participant
+        // 🔹 1. Vérifier l'existence du participant
         $stmt = $pdo->prepare("SELECT * FROM participants WHERE code_participant=?");
         $stmt->execute([$code_participant]);
         if (!$stmt->fetch()) {
-            $pdo->rollBack();
             send_response(false, "Participant introuvable !");
         }
 
-        // Vérifier le type de document
+        // 🔹 2. Vérifier le type de document
         $stmt = $pdo->prepare("SELECT id_type_document FROM type_document_kyc WHERE libelle_type_document=?");
         $stmt->execute([$type_document]);
         $type_doc = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$type_doc) {
-            $pdo->rollBack();
             send_response(false, "Type de document invalide.");
         }
 
-        // --- 🔹 Étape 4 : Vérifier les demandes en attente ---
+        // 🔹 3. Vérifier les demandes en attente (CRITIQUE : avant upload)
         $stmt = $pdo->prepare("SELECT * FROM document_kyc 
                                WHERE code_participant=? 
                                AND statut_validation='En attente' 
                                AND DATEDIFF(NOW(), date_soumission)<=7");
         $stmt->execute([$code_participant]);
         if ($stmt->fetch()) {
-            $pdo->rollBack();
             send_response(false, "Vous avez déjà une demande de vérification en cours.");
         }
 
-        // --- 🔹 Étape 5 : Enregistrer la demande ---
+        // ✅ Toutes les vérifications sont OK, on peut maintenant uploader les fichiers
+        
+        $upload_dir = __DIR__ . "/../uploads/documents_kyc/" . $code_participant . "/";
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+
+        // 🔹 Fonction utilitaire corrigée
+        function enregistrer_image($file, $prefix, $upload_dir, $code_participant, $allowed_types, $max_size) {
+            if ($file['error'] !== UPLOAD_ERR_OK) {
+                throw new Exception("Erreur de téléchargement pour le fichier " . $file['name']);
+            }
+
+            if ($file['size'] > $max_size) {
+                throw new Exception("Le fichier " . $file['name'] . " dépasse la taille maximale de 5MB");
+            }
+
+            // Vérification du type réel de l'image
+            $info = getimagesize($file['tmp_name']);
+            if (!$info) {
+                throw new Exception("Le fichier " . $file['name'] . " n'est pas une image valide.");
+            }
+
+            // Types acceptés
+            if (!in_array($info['mime'], $allowed_types)) {
+                throw new Exception("Format non supporté pour " . $file['name'] . " (JPEG ou PNG requis)");
+            }
+
+            // Extension correcte
+            $ext = ($info['mime'] === 'image/png') ? 'png' : 'jpg';
+            $filename = $prefix . "_" . uniqid() . "." . $ext;
+            $destination = $upload_dir . $filename;
+
+            if (!move_uploaded_file($file['tmp_name'], $destination)) {
+                throw new Exception("Impossible d'enregistrer le fichier " . $file['name']);
+            }
+
+            return "uploads/documents_kyc/" . $code_participant . "/" . $filename;
+        }
+
+        // 🔹 Upload des fichiers (uniquement si toutes les vérifications sont passées)
+        $path_recto = enregistrer_image($_FILES['fichier_document_recto'], "recto", $upload_dir, $code_participant, $allowed_types, $max_size);
+        $path_selfie = enregistrer_image($_FILES['selfie_photo'], "selfie", $upload_dir, $code_participant, $allowed_types, $max_size);
+        $path_verso = $verso_fourni 
+            ? enregistrer_image($_FILES['fichier_document_verso'], "verso", $upload_dir, $code_participant, $allowed_types, $max_size)
+            : null;
+
+        // --- 🔹 Étape 4 : Enregistrement en base ---
+        $pdo->beginTransaction();
+
+        // --- 🔹 Enregistrer la demande en base ---
         $sql = $verso_fourni ? 
             "INSERT INTO document_kyc(code_participant,id_type_document,numero_document,fichier_document_recto,fichier_document_verso,fichier_selfie,statut_validation,date_soumission)
              VALUES(?,?,?,?,?,?, 'En attente', NOW())" :
             "INSERT INTO document_kyc(code_participant,id_type_document,numero_document,fichier_document_recto,fichier_selfie,statut_validation,date_soumission)
-             VALUES(?,?,?,?, 'En attente', NOW())";
+             VALUES(?,?,?,?,?, 'En attente', NOW())";
 
         $params = $verso_fourni ?
             [$code_participant, $type_doc['id_type_document'], $numero_document, $path_recto, $path_verso, $path_selfie] :
@@ -443,6 +465,17 @@ function demande_upgrade_kyc() {
         ]);
 
     } catch (Throwable $e) {
+        // 🔹 En cas d'erreur après upload, supprimer les fichiers uploadés
+        if (isset($path_recto) && file_exists(__DIR__ . "/../" . $path_recto)) {
+            unlink(__DIR__ . "/../" . $path_recto);
+        }
+        if (isset($path_verso) && $path_verso && file_exists(__DIR__ . "/../" . $path_verso)) {
+            unlink(__DIR__ . "/../" . $path_verso);
+        }
+        if (isset($path_selfie) && file_exists(__DIR__ . "/../" . $path_selfie)) {
+            unlink(__DIR__ . "/../" . $path_selfie);
+        }
+        
         if ($pdo && $pdo->inTransaction()) {
             $pdo->rollBack();
         }

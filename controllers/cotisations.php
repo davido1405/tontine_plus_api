@@ -209,6 +209,11 @@ function payer_cotisation(){
         $stmt4->execute([$data['code_tontine']]);
         $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
 
+        //Récupérer la limite journalière de transaction selon le niveau
+        $stmt9=$pdo->prepare("SELECT k.transaction_journaliere as limiteTransac FROM participants as p INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc WHERE p.code_participant=?");
+        $stmt9->execute([$data['code_participant']]);
+        $niveau_kyc=$stmt9->fetch(PDO::FETCH_ASSOC);
+
 
         if(!$tontine){
             throw new Exception("Cette tontine n'existe pas.");
@@ -217,7 +222,11 @@ function payer_cotisation(){
             //Corriger le calcul des frais ici après avoir corrigé au niveau de l'app
         }else if($data['montant']/1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
+        }elseif ($data['montant']/1.02>$niveau_kyc['limiteTransac']) {
+            throw new Exception("Le montant cotiser dépasse la limite journalière fixée pour votre profil");
         }
+
+        
 
         //Récupérer l'id du mode paiement
         $stmt1=$pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement=?");
@@ -236,13 +245,13 @@ function payer_cotisation(){
         $montantParTour = $tontine['montant_cotisation'];
 
         //Payer les tours manqués en priorité s'il y en a
-        $stmt7=$pdo->prepare("SELECT * FROM cotisations_manquees WHERE statut='Impayée' AND code_tontine=? AND code_participant=? ORDER BY date_manquee ASC");
-        $stmt7->execute([$data['code_tontine'],$data['code_participant']]);
+        $stmt7=$pdo->prepare("SELECT * FROM cotisations_manquees WHERE id_statut_paiement=? AND code_tontine=? AND code_participant=? ORDER BY date_manquee ASC");
+        $stmt7->execute([1,$data['code_tontine'],$data['code_participant']]);
         $cotisations_manquees=$stmt7->fetchAll(PDO::FETCH_ASSOC);
         foreach ($cotisations_manquees as $cotisation_manquee) {
             if ($montantRestant<$montantParTour) break;
-            $stmt8=$pdo->prepare("UPDATE cotisations_manquees set statut='Payée', date_rattrapage=? WHERE id_cotisation_manquee=?");
-            $stmt8->execute([date('Y-m-d H:i:s'),$cotisation_manquee['id_cotisation_manquee']]);
+            $stmt8=$pdo->prepare("UPDATE cotisations_manquees set id_statut_paiement=?,id_mode_paiement=?, date_rattrapage=? WHERE id_cotisation_manquee=?");
+            $stmt8->execute([2,$idModepai['id_mode_paiement'],date('Y-m-d H:i:s'),$cotisation_manquee['id_cotisation_manquee']]);
             $montantRestant-=$montantParTour;
         }
 
@@ -423,7 +432,8 @@ function voir_mes_cotisations(){
     $pdo=getDB();
 
     //Recupérer la date de la dernière cotisation
-    $stmt1=$pdo->prepare("SELECT c.code_cotisation, c.code_tontine, c.code_participant,c.montant,c.nombre_tour_avance,c.date_paiement,m.libelle_mode_paiement,s.libelle_statut_paiement FROM cotisations c INNER JOIN mode_paiement as m ON c.id_mode_paiement=m.id_mode_paiement INNER JOIN status_paiement as s ON c.id_statut_paiement=s.id_statut_paiement WHERE code_participant=? AND code_tontine=? ORDER BY date_paiement DESC");
+    $stmt1=$pdo->prepare("SELECT c.code_cotisation, c.code_tontine, c.code_participant,c.montant,c.nombre_tour_avance,c.date_paiement,m.libelle_mode_paiement,s.libelle_statut_paiement FROM cotisations c INNER JOIN mode_paiement as m ON c.id_mode_paiement=m.id_mode_paiement INNER JOIN status_paiement as s ON c.id_statut_paiement=s.id_statut_paiement WHERE code_participant=? AND code_tontine=? ORDER BY date_paiement DESC
+    ");
     $stmt1->execute([$data['code_participant'],$data['code_tontine']]);
     $cotisations=$stmt1->fetchAll(PDO::FETCH_ASSOC);
 
