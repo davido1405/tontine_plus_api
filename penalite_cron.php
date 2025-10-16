@@ -6,6 +6,14 @@ require_once __DIR__ . '/vendor/autoload.php';
 
 use Firebase\JWT\JWT;
 
+function code_cotisation_manquees() {
+    $prefix = "COTM";
+    $date = date("ymd"); // Format YYMMDD
+    $random = strtoupper(substr(uniqid(), -5)); // 5 derniers caractères aléatoires uniques
+
+    return $prefix . "-" . $date . "-" . $random;
+}
+
 $pdo = getDB();
 
 // Récupérer toutes les tontines en cours
@@ -66,9 +74,10 @@ try {
 
                 if ($penalite) {
                     $nouvel_indice=max(0,$indice_precedent-5);
+                    $code_cotisation_manqu=code_cotisation_manquees();
                     //Inserer dans la table cotisations_manques
-                    $stmt3=$pdo->prepare("INSERT INTO cotisations_manquees(code_participant,code_tontine,montant,date_manque) VALUES (?,?,?,?)");
-                    $stmt3->execute([$part['code_participant'],$tontine['code_tontine'],$tontine['montant_cotisation'],date('Y-m-d H:i:s')]);
+                    $stmt3=$pdo->prepare("INSERT INTO cotisations_manquees(code_cotisation_manquee,code_participant,code_tontine,montant,date_manque) VALUES (?,?,?,?,?)");
+                    $stmt3->execute([$code_cotisation_manqu,$part['code_participant'],$tontine['code_tontine'],$tontine['montant_cotisation'],date('Y-m-d H:i:s')]);
                     
                     sendPushNotification($part['fcm_token'], "Alerte cotisation de manquée", "Pensez à vous acquiter de toutes vos cotisations le plus tôt possible. Merci !");
                 }else{

@@ -579,40 +579,54 @@ function transactions(){
 
     $pdo=getDB();
     $stmt=$pdo->prepare("SELECT 
-            p.nom_participant,
-            p.prenoms_participant,
-            c.montant,
-            c.date_paiement AS date_transaction,
-            'Cotisation' AS type_transaction,
-            m.libelle_mode_paiement AS mode_paiement,
-            s.libelle_statut_paiement AS statut
-        FROM cotisations c INNER JOIN participants as p ON p.code_participant=c.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=c.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=c.id_statut_paiement WHERE c.code_tontine=? ORDER BY date_transaction ASC;
+    p.nom_participant,
+    p.prenoms_participant,
+    c.montant,
+    c.date_paiement AS date_transaction,
+    'Cotisation' AS type_transaction,
+    m.libelle_mode_paiement AS mode_paiement,
+    s.libelle_statut_paiement AS statut
+    FROM cotisations c 
+    INNER JOIN participants AS p ON p.code_participant = c.code_participant 
+    INNER JOIN mode_paiement AS m ON m.id_mode_paiement = c.id_mode_paiement 
+    INNER JOIN status_paiement AS s ON s.id_statut_paiement = c.id_statut_paiement 
+    WHERE c.code_tontine = ?
 
-        UNION ALL
+    UNION ALL
 
-        SELECT
-            p.nom_participant,
-            p.prenoms_participant,
-            e.montant,
-            e.date_paiement AS date_transaction,
-            'Retrait' AS type_transaction,
-            m.libelle_mode_paiement AS mode_paiement,
-            s.libelle_statut_paiement AS statut
-        FROM paiement_tour e INNER JOIN participants as p ON p.code_participant=e.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=e.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=e.id_statut_paiement WHERE e.code_tontine=? ORDER BY date_transaction ASC;
-        
-        UNION ALL
+    SELECT
+        p.nom_participant,
+        p.prenoms_participant,
+        e.montant,
+        e.date_paiement AS date_transaction,
+        'Retrait' AS type_transaction,
+        m.libelle_mode_paiement AS mode_paiement,
+        s.libelle_statut_paiement AS statut
+    FROM paiement_tour e 
+    INNER JOIN participants AS p ON p.code_participant = e.code_participant 
+    INNER JOIN mode_paiement AS m ON m.id_mode_paiement = e.id_mode_paiement 
+    INNER JOIN status_paiement AS s ON s.id_statut_paiement = e.id_statut_paiement 
+    WHERE e.code_tontine = ?
 
-        SELECT
-            p.nom_participant,
-            p.prenoms_participant,
-            d.montant,
-            d.date_rattrapage AS date_transaction,
-            'Rattrapage' AS type_transaction,
-            m.libelle_mode_paiement AS mode_paiement,
-            s.libelle_statut_paiement AS statut
-        FROM cotisations_manquees d INNER JOIN participants as p ON p.code_participant=d.code_participant INNER JOIN mode_paiement as m ON m.id_mode_paiement=d.id_mode_paiement INNER JOIN status_paiement AS s ON s.id_statut_paiement=d.id_statut_paiement WHERE d.code_tontine=? ORDER BY date_transaction ASC;
-        ");
-    $stmt->execute([$data['code_tontine'],$data['code_tontine'],$data['code_tontine']]);
+    UNION ALL
+
+    SELECT 
+        p.nom_participant,
+        p.prenoms_participant, 
+        cm.montant,
+        COALESCE(cm.date_rattrapage, cm.date_manquee) AS date_transaction,
+        'Rattrapage' AS type_transaction,
+        m.libelle_mode_paiement AS mode_paiement,
+        s.libelle_statut_paiement AS statut
+    FROM cotisations_manquees cm
+    INNER JOIN participants AS p ON p.code_participant = cm.code_participant
+    INNER JOIN mode_paiement AS m ON cm.id_mode_paiement = m.id_mode_paiement 
+    INNER JOIN status_paiement AS s ON cm.id_statut_paiement = s.id_statut_paiement 
+    WHERE cm.code_tontine = ? AND cm.id_statut_paiement = ?
+
+    ORDER BY date_transaction DESC");
+
+    $stmt->execute([$data['code_tontine'],$data['code_tontine'],$data['code_tontine'],2]);
     $resultats=$stmt->fetchAll(PDO::FETCH_ASSOC);
     if($resultats){
         $transactions=[];

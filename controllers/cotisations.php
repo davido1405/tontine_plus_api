@@ -431,11 +431,52 @@ function voir_mes_cotisations(){
 
     $pdo=getDB();
 
-    //Recupérer la date de la dernière cotisation
-    $stmt1=$pdo->prepare("SELECT c.code_cotisation, c.code_tontine, c.code_participant,c.montant,c.nombre_tour_avance,c.date_paiement,m.libelle_mode_paiement,s.libelle_statut_paiement FROM cotisations c INNER JOIN mode_paiement as m ON c.id_mode_paiement=m.id_mode_paiement INNER JOIN status_paiement as s ON c.id_statut_paiement=s.id_statut_paiement WHERE code_participant=? AND code_tontine=? ORDER BY date_paiement DESC
-    ");
-    $stmt1->execute([$data['code_participant'],$data['code_tontine']]);
-    $cotisations=$stmt1->fetchAll(PDO::FETCH_ASSOC);
+    // Récupérer toutes les cotisations (normales + manquées)
+$stmt1 = $pdo->prepare(
+    "SELECT 
+        c.code_cotisation AS code_transaction,
+        c.code_participant, 
+        c.code_tontine, 
+        c.montant,
+        c.nombre_tour_avance,
+        c.date_paiement AS date_cotisation,
+        c.date_paiement AS date_reference,
+        m.libelle_mode_paiement,
+        s.libelle_statut_paiement,
+        'Cotisation' AS type_cotisation
+    FROM cotisations c 
+    INNER JOIN mode_paiement AS m ON c.id_mode_paiement = m.id_mode_paiement 
+    INNER JOIN status_paiement AS s ON c.id_statut_paiement = s.id_statut_paiement 
+    WHERE c.code_participant = ? AND c.code_tontine = ?
+    
+    UNION ALL
+    
+    SELECT 
+        cm.code_cotisation_manquee AS code_transaction,
+        cm.code_participant, 
+        cm.code_tontine, 
+        cm.montant,
+        NULL AS nombre_tour_avance,
+        cm.date_manquee AS date_cotisation,
+        COALESCE(cm.date_rattrapage, cm.date_manquee) AS date_reference,
+        m.libelle_mode_paiement,
+        s.libelle_statut_paiement,
+        'Rattrapage' AS type_cotisation
+    FROM cotisations_manquees cm 
+    INNER JOIN mode_paiement AS m ON cm.id_mode_paiement = m.id_mode_paiement 
+    INNER JOIN status_paiement AS s ON cm.id_statut_paiement = s.id_statut_paiement 
+    WHERE cm.code_participant = ? AND cm.code_tontine = ?
+    
+    ORDER BY date_reference DESC"
+);
+
+$stmt1->execute([
+    $data['code_participant'], 
+    $data['code_tontine'],
+    $data['code_participant'], 
+    $data['code_tontine']
+]);
+$cotisations = $stmt1->fetchAll(PDO::FETCH_ASSOC);
 
     if(!$cotisations){
         send_response(false,"Vous n'avez encore payé aucune cotisation");
@@ -444,10 +485,11 @@ function voir_mes_cotisations(){
     $formated=[];
     foreach($cotisations as $cotisation){
         $formated[]=[
-            "code_cotisation"=>$cotisation['code_cotisation'],
+            "code_cotisation"=>$cotisation['code_transaction'],
+            "type_cotisation"=>$cotisation['type_cotisation'],
             "montant"=>$cotisation['montant'],
             "nombre_tour_avance"=>$cotisation['nombre_tour_avance'],
-            "date_paiement"=>$cotisation['date_paiement'],
+            "date_paiement"=>$cotisation['date_reference'],
             "mode_paiement"=>$cotisation['libelle_mode_paiement'],
             "statut_paiement"=>$cotisation['libelle_statut_paiement']
         ];
