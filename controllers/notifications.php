@@ -135,7 +135,7 @@ function envoyer_notification_penlaite(){
 
 function sendPushNotification($token, $title, $body) {
     $logFile = __DIR__ . '/fcm_debug.log';
-    
+
     // Vérifier que le token n'est pas vide
     if (empty($token)) {
         file_put_contents($logFile, "[" . date('Y-m-d H:i:s') . "] Token FCM vide\n", FILE_APPEND);
@@ -392,9 +392,8 @@ function lister_notification1(){
 
 
 function lister_notification() {
-
-    //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    // Vérifier le token utilisateur avant tout !
+    $decoder = verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -418,18 +417,19 @@ function lister_notification() {
                 ON n.id_statut_notification = s.id_statut_notification
             INNER JOIN type_notification t 
                 ON n.id_type_notification = t.id_type_notification
-            WHERE n.code_participant = :code_participant ORDER BY n.date_envoie DESC LIMIT 10
+            WHERE n.code_participant = :code_participant
         ";
 
         $params = ["code_participant" => $data['code_participant']];
 
-        // Si filtre spécifique
+        // Si filtre spécifique (Lu ou Non lu)
         if (in_array($filtre, ["Lu", "Non lu"])) {
             $sql .= " AND s.statut_notification = :filtre";
             $params["filtre"] = $filtre;
         }
 
-        $sql .= " ORDER BY n.date_envoie DESC";
+        // Ajouter ORDER BY et LIMIT à la fin
+        $sql .= " ORDER BY n.date_envoie DESC LIMIT 10";
 
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);

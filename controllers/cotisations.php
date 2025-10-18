@@ -192,7 +192,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant,$montantC
 function payer_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -214,6 +214,26 @@ function payer_cotisation(){
         $stmt9->execute([$data['code_participant']]);
         $niveau_kyc=$stmt9->fetch(PDO::FETCH_ASSOC);
 
+        //Récupérer le total des transactions journalière effectuée pour vérification
+        $stmt10=$pdo->prepare("SELECT 
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations 
+            WHERE code_participant =? AND code_tontine=?
+            AND date_paiement >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            AND id_statut_paiement = 2), 0
+        ) +
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations_manquees 
+            WHERE code_participant =? AND code_tontine=?
+            AND date_rattrapage >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            AND id_statut_paiement = 2), 0
+        ) AS total_transactions_24h");
+        $stmt10->execute([$data['code_participant'],$data['code_tontine'],$data['code_participant'],$data['code_tontine']]);
+
+        $transaction_24H=$stmt10->fetch(PDO::FETCH_ASSOC);
+        
 
         if(!$tontine){
             throw new Exception("Cette tontine n'existe pas.");
@@ -222,8 +242,8 @@ function payer_cotisation(){
             //Corriger le calcul des frais ici après avoir corrigé au niveau de l'app
         }else if($data['montant']/1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
-        }elseif ($data['montant']/1.02>$niveau_kyc['limiteTransac']) {
-            throw new Exception("Le montant cotiser dépasse la limite journalière fixée pour votre profil");
+        }elseif ($transaction_24H['total_transactions_24h']+$data['montant']/1.02>$niveau_kyc['limiteTransac']) {
+            throw new Exception("Le montant cotiser dépasse la limite journalière(".$niveau_kyc['limiteTransac'].") fixée pour votre profil");
         }
 
         
@@ -326,7 +346,7 @@ function payer_cotisation(){
 function payer_penalite() {
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
     $data = json_decode(file_get_contents('php://input'), true);
 
@@ -418,9 +438,8 @@ function payer_penalite() {
 
 function voir_mes_cotisations(){
 
-    
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
 
     $data=json_decode(file_get_contents('php://input'),true);
@@ -432,43 +451,43 @@ function voir_mes_cotisations(){
     $pdo=getDB();
 
     // Récupérer toutes les cotisations (normales + manquées)
-$stmt1 = $pdo->prepare(
-    "SELECT 
-        c.code_cotisation AS code_transaction,
-        c.code_participant, 
-        c.code_tontine, 
-        c.montant,
-        c.nombre_tour_avance,
-        c.date_paiement AS date_cotisation,
-        c.date_paiement AS date_reference,
-        m.libelle_mode_paiement,
-        s.libelle_statut_paiement,
-        'Cotisation' AS type_cotisation
-    FROM cotisations c 
-    INNER JOIN mode_paiement AS m ON c.id_mode_paiement = m.id_mode_paiement 
-    INNER JOIN status_paiement AS s ON c.id_statut_paiement = s.id_statut_paiement 
-    WHERE c.code_participant = ? AND c.code_tontine = ?
-    
-    UNION ALL
-    
-    SELECT 
-        cm.code_cotisation_manquee AS code_transaction,
-        cm.code_participant, 
-        cm.code_tontine, 
-        cm.montant,
-        NULL AS nombre_tour_avance,
-        cm.date_manquee AS date_cotisation,
-        COALESCE(cm.date_rattrapage, cm.date_manquee) AS date_reference,
-        m.libelle_mode_paiement,
-        s.libelle_statut_paiement,
-        'Rattrapage' AS type_cotisation
-    FROM cotisations_manquees cm 
-    INNER JOIN mode_paiement AS m ON cm.id_mode_paiement = m.id_mode_paiement 
-    INNER JOIN status_paiement AS s ON cm.id_statut_paiement = s.id_statut_paiement 
-    WHERE cm.code_participant = ? AND cm.code_tontine = ?
-    
-    ORDER BY date_reference DESC"
-);
+    $stmt1 = $pdo->prepare(
+        "SELECT 
+            c.code_cotisation AS code_transaction,
+            c.code_participant, 
+            c.code_tontine, 
+            c.montant,
+            c.nombre_tour_avance,
+            c.date_paiement AS date_cotisation,
+            c.date_paiement AS date_reference,
+            m.libelle_mode_paiement,
+            s.libelle_statut_paiement,
+            'Cotisation' AS type_cotisation
+        FROM cotisations c 
+        INNER JOIN mode_paiement AS m ON c.id_mode_paiement = m.id_mode_paiement 
+        INNER JOIN status_paiement AS s ON c.id_statut_paiement = s.id_statut_paiement 
+        WHERE c.code_participant = ? AND c.code_tontine = ?
+        
+        UNION ALL
+        
+        SELECT 
+            cm.code_cotisation_manquee AS code_transaction,
+            cm.code_participant, 
+            cm.code_tontine, 
+            cm.montant,
+            NULL AS nombre_tour_avance,
+            cm.date_manquee AS date_cotisation,
+            COALESCE(cm.date_rattrapage, cm.date_manquee) AS date_reference,
+            m.libelle_mode_paiement,
+            s.libelle_statut_paiement,
+            'Rattrapage' AS type_cotisation
+        FROM cotisations_manquees cm 
+        INNER JOIN mode_paiement AS m ON cm.id_mode_paiement = m.id_mode_paiement 
+        INNER JOIN status_paiement AS s ON cm.id_statut_paiement = s.id_statut_paiement 
+        WHERE cm.code_participant = ? AND cm.code_tontine = ?
+        
+        ORDER BY date_reference DESC"
+    );
 
 $stmt1->execute([
     $data['code_participant'], 
@@ -501,7 +520,7 @@ $cotisations = $stmt1->fetchAll(PDO::FETCH_ASSOC);
 function voir_mes_penalites(){
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
 
     $data=json_decode(file_get_contents('php://input'),true);
@@ -537,8 +556,7 @@ function voir_mes_penalites(){
 function total_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
-
+    $decoder=verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 

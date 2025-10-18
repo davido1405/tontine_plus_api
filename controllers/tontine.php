@@ -416,8 +416,9 @@ function listeParticipants(){
 
 
 function lister_tour($code_tontine=null,$relancer=false){
-    // Vérifier le token utilisateur avant tout
-    verifier_token();
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
 
     // Récupération des données JSON uniquement si $code_tontine non fourni
     if ($code_tontine === null) {
@@ -705,7 +706,7 @@ function ordrePaiement() {
 function retrait(){
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
 
     $data = json_decode(file_get_contents("php://input"), true);

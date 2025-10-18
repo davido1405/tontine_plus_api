@@ -129,7 +129,7 @@ function login_participant() {
 function get_profil() {
 
     //Vérifier le token utilisateur avant tous !
-    verifier_token();
+    $decoder=verifier_token();
 
     
     $data = json_decode(file_get_contents("php://input"), true);
@@ -166,6 +166,10 @@ function get_profil() {
 
 
 function update_profil() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_participant']) || empty($data['code_participant'])) {
@@ -224,6 +228,10 @@ function update_profil() {
 
 
 function delete_participant() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_participant'])) {
@@ -249,6 +257,10 @@ function delete_participant() {
 
 
 function monTour(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data=json_decode(file_get_contents('php://input'),true);
 
     if(!isset($data['code_tontine'],$data['code_participant']) || empty($data['code_tontine']) || empty($data['code_participant'])){
@@ -269,6 +281,10 @@ function monTour(){
 
 
 function recupere_tour_actuel() {
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_tontine']) || empty($data['code_tontine'])) {
@@ -305,8 +321,9 @@ function recupere_tour_actuel() {
 
 //Récupérer nombre de cotisations manqués
 function cotisation_manques(){
-    // Vérifier le token
-    //$decoder = verifier_token();
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
