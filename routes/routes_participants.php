@@ -40,6 +40,9 @@ if(isset($_GET['action'])){
         case 'infos_wallet_participant':
             info_wallet_participant();
             break;
+        case 'retirer':
+            retrait();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 

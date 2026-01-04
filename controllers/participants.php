@@ -541,7 +541,9 @@ function demande_upgrade_kyc() {
 }
 
 function info_wallet_participant(){
-    //verifier_token();
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
 
     $data=json_decode(file_get_contents("php://input"),true);
 
@@ -577,6 +579,7 @@ function info_wallet_participant(){
         ) +
         COALESCE(
             (SELECT SUM(montant) 
+            
             FROM cotisations_manquees  
             WHERE code_participant =?
             AND DATE(date_rattrapage) = CURDATE()
@@ -606,12 +609,94 @@ function info_wallet_participant(){
         $stmt3->execute([$data['code_participant'], $data['code_participant']]);
         $transaction_mois = $stmt3->fetch(PDO::FETCH_ASSOC);
 
-send_response(true,"Information wallet participant",[
-    "solde_participant"=>$compte_participant['solde_participant'],
-    "transaction_journaliere"=>$transaction_24H['total_transactions_jour'],
-    "transaction_mois"=>$transaction_mois['total_transactions_mois'],
-    "limite_kyc_jour"=>$niveau_kyc['limiteTransac'],
-    "limite_kyc_mois"=>$niveau_kyc['limiteMensuelle']
-]);
+        send_response(true,"Information wallet participant",[
+            "solde_participant"=>$compte_participant['solde_participant'],
+            "transaction_journaliere"=>$transaction_24H['total_transactions_jour'],
+            "transaction_mois"=>$transaction_mois['total_transactions_mois'],
+            "limite_kyc_jour"=>$niveau_kyc['limiteTransac'],
+            "limite_kyc_mois"=>$niveau_kyc['limiteMensuelle']
+        ]);
+    }
+
+//Modifié pour un retrait depuis le wallet participant
+function retrait(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
+    $data = json_decode(file_get_contents("php://input"), true);
+    if (!isset($data['libelle_mode_paiement'],$data['montant'],$data['code_participant']) ||empty($data['libelle_mode_paiement']) ||empty($data['montant']) || empty($data['code_participant'])) {
+        send_response(false, "Veuillez remplir tous les champs !");
+    }
+
+
+    $code_participant=$data['code_participant'];
+    $montant=(float)$data['montant'];
+    $mode_paiement=$data['libelle_mode_paiement'];
     
+
+    $pdo = getDB();
+    try {
+        $pdo->beginTransaction(); 
+
+        // 1) Vérifier le solde AVEC verrouillage
+        $check_solde = $pdo->prepare("SELECT solde_participant 
+                                    FROM wallet_participant 
+                                    WHERE code_participant = ? 
+                                    FOR UPDATE");
+        $check_solde->execute([$code_participant]);
+        $wallet = $check_solde->fetch(PDO::FETCH_ASSOC);
+
+        // 2) Valider le solde
+        if ($wallet['solde_participant'] < $montant) {
+            throw new Exception("Solde insuffisant. Disponible : " . $wallet['solde_participant'] . " FCFA");
+        }
+
+        // 3) Débiter
+        $debiter = $pdo->prepare("UPDATE wallet_participant 
+                                SET solde_participant = solde_participant - ? 
+                                WHERE code_participant = ?");
+        $debiter->execute([$montant, $code_participant]);
+
+        //4) Historiser le débit
+            $historique = $pdo->prepare("INSERT INTO historique_wallet_participant 
+                (code_participant, type_operation, montant, description, date_operation) 
+                VALUES (?, 'Retrait', ?, ?, NOW())");
+            $historique->execute([
+                $code_participant,
+                $montant,
+                "Retrait de ".$montant. "FCFA par ".$mode_paiement,
+            ]);
+
+            $phrases = [
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA effectué avec succès. Avec Djarra ton cœur bat pas ! 😏",
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA 💸 effectué. Le paiya est clair ! 🚀",
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA effectué ✅. T'es fan ou bien ! 😎",
+                "Montant de " . number_format($montant, 0, ',', ' ') . " FCFA retiré avec succès. Djarra c'est la ref 😁"
+            ];
+
+            $message = $phrases[array_rand($phrases)];
+
+        $pdo->commit();
+
+        // 1) Récupérer le nouveau solde APRÈS le commit
+        $nouveau_solde_query = $pdo->prepare("SELECT solde_participant 
+                                            FROM wallet_participant 
+                                            WHERE code_participant = ?");
+        $nouveau_solde_query->execute([$code_participant]);
+        $nouveau_solde = $nouveau_solde_query->fetch(PDO::FETCH_ASSOC);
+
+        // 2) Envoyer une réponse complète
+        send_response(true, $message, [
+            'montant_retire' => $montant,
+            'ancien_solde' => $wallet['solde_participant'],
+            'nouveau_solde' => $nouveau_solde['solde_participant'],
+            'mode_paiement' => $mode_paiement
+        ]);
+
+        }catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
+    }
 }

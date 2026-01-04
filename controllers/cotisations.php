@@ -195,7 +195,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant,$montantC
 function payer_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    //$decoder=verifier_token();
+    $decoder=verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
