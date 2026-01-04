@@ -19,6 +19,9 @@ function code_cotisation() {
     return $prefix . "-" . $date . "-" . $random;
 }
 
+/**
+ * Fonction pour l'ajout de pénalité
+ */
 function ajouter_penalites(){
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -192,7 +195,7 @@ function envoyer_notification_paiement($code_tontine,$code_participant,$montantC
 function payer_cotisation(){
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    //$decoder=verifier_token();
 
     $data=json_decode(file_get_contents('php://input'),true);
 
@@ -205,35 +208,206 @@ function payer_cotisation(){
 
         $pdo->beginTransaction();
         //Vérifier l'existance de la tontine
-        $stmt4=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
+        $stmt4=$pdo->prepare("SELECT t.*,f.libelle_frequence_paiement as frequence_paiement, c.libelle_frequence as frequence_cotisation FROM tontine t INNER JOIN frequence_paiement as f ON f.id_frequence_paiement=t.id_frequence INNER JOIN frequence as c ON c.id_frequence=t.id_frequence WHERE t.code_tontine=?");
         $stmt4->execute([$data['code_tontine']]);
         $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
 
-        //Récupérer la limite journalière de transaction selon le niveau
-        $stmt9=$pdo->prepare("SELECT k.transaction_journaliere as limiteTransac FROM participants as p INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc WHERE p.code_participant=?");
+
+        //Récupérer la fréquence de paiement
+        if($tontine['frequence_paiement']=="Hebdomadaire"){
+            $periodicite=7;
+        }elseif($tontine['frequence_paiement']=="Mensuelle"){
+            $periodicite=30;
+        }elseif($tontine['frequence_paiement']=="Trimestrielle"){
+            $periodicite=90;
+        }else{
+            throw new Exception("Périodicité non définie");
+        }
+
+        //Récupérer la fréquence de cotisation
+        if($tontine['frequence_cotisation']=="Journalière"){
+            $nombre_cotisation=$periodicite;
+        }elseif($tontine['frequence_cotisation']=="Hebdomadaire"){
+            $nombre_cotisation=ceil($periodicite/7);
+        }elseif($tontine['frequence_cotisation']=="Mensuelle"){
+            $nombre_cotisation=ceil($periodicite/30);
+        }else{
+            throw new Exception("Nombre de cotisation impossible à déterminer");
+        }
+
+        // ========== NOUVELLE VÉRIFICATION : BLOCAGE DU SURPAIEMENT ==========
+
+        // 1) Calculer le montant THÉORIQUE du tour actuel
+        $montantParTour = $tontine['montant_cotisation'];
+        $nbParticipants = (int)$tontine['nombre_participant'];
+
+        $montantTheoriqueTour = $montantParTour * $nombre_cotisation;
+
+        error_log("Tour " . $tontine['tour_actuel'] . " - Montant théorique : $montantTheoriqueTour FCFA à cotiser par participant");
+
+
+        //Faut récupérer la date de la dernière distribution de gain comme nouveau point de départ pour la vérification de surpaiement
+        // Ligne 59-67 : Récupérer la date de début du tour
+        $verif = $pdo->prepare("
+            SELECT p.date_paiement as dernier_paiement 
+            FROM paiement_tour as p 
+            WHERE p.code_tontine = ?
+            ORDER BY p.date_paiement DESC 
+            LIMIT 1
+        ");
+        $verif->execute([$data['code_tontine']]);
+        $derniere_distribution = $verif->fetch(PDO::FETCH_ASSOC);
+
+        // Si premier tour, utiliser date début tontine
+        if ($derniere_distribution) {
+            $date_debut_tour = $derniere_distribution['dernier_paiement'];
+        } else {
+            // Premier tour
+            $stmt_date = $pdo->prepare("SELECT date_creation FROM tontine WHERE code_tontine = ?");
+            $stmt_date->execute([$data['code_tontine']]);
+            $date_tontine = $stmt_date->fetch(PDO::FETCH_ASSOC);
+            $date_debut_tour = $date_tontine['date_creation'] ?? date('Y-m-d H:i:s');
+        }
+
+        error_log("Tour " . $tontine['tour_actuel'] . " - Date de référence : $date_debut_tour");
+
+        $stmt_deja_cotise = $pdo->prepare("
+            SELECT COALESCE(SUM(montant), 0) as total_deja_cotise
+            FROM cotisations
+            WHERE code_tontine = ?
+            AND code_participant = ?
+            AND id_statut_paiement = 2
+            AND nombre_tour_avance = 0
+           AND date_paiement > ?");//← AJOUTER CETTE LIGNE !
+        $stmt_deja_cotise->execute([
+            $data['code_tontine'],
+            $data['code_participant'],
+            $date_debut_tour]);//← AJOUTER CE PARAMÈTRE!
+
+
+        $deja_cotise_row = $stmt_deja_cotise->fetch(PDO::FETCH_ASSOC);
+        $montantDejaCotise = (float)$deja_cotise_row['total_deja_cotise'];
+
+        error_log("Tour " . $tontine['tour_actuel'] . " - Déjà cotisé : $montantDejaCotise FCFA");
+
+        // 3) Calculer ce qu'il RESTE à collecter
+        $montantRestantACollecter = $montantTheoriqueTour - $montantDejaCotise;
+        if ($montantRestantACollecter < 0) {
+            $montantRestantACollecter = 0;
+        }
+
+        error_log("Tour " . $tontine['tour_actuel'] . " - Reste à collecter : $montantRestantACollecter FCFA");
+
+        // 4) Calculer combien ce participant veut contribuer au tour ACTUEL
+        $montantCotiserDemande = $data['montant'] / 1.02;
+
+        // 4a) Compter les retards
+        $stmt_retards = $pdo->prepare("SELECT COUNT(*) as nb_retards 
+                                    FROM cotisations_manquees 
+                                    WHERE id_statut_paiement = 1 
+                                        AND code_tontine = ? 
+                                        AND code_participant = ?");
+        $stmt_retards->execute([$data['code_tontine'], $data['code_participant']]);
+        $retards = $stmt_retards->fetch(PDO::FETCH_ASSOC);
+        $nbRetards = (int)$retards['nb_retards'];
+
+        // 4b) Montant qui ira au tour actuel (après paiement des retards)
+        $montantApresRetards = $montantCotiserDemande - ($nbRetards * $montantParTour);
+        if ($montantApresRetards < 0) {
+            $montantApresRetards = 0;
+        }
+
+        $montantPourTourActuel = min($montantApresRetards, $montantParTour);
+
+        // 5) VÉRIFIER que le montant ne dépasse pas le reste à collecter
+        if ($montantPourTourActuel > $montantRestantACollecter) {
+            throw new Exception(
+                "❌ Montant trop élevé pour le tour actuel !\n\n" .
+                "📊 Votre situation pour le tour " . $tontine['tour_actuel'] . " :\n" .
+                "• Votre cotisation requise : " . number_format($montantTheoriqueTour, 0, ',', ' ') . " FCFA\n" .
+                "  (" . $montantParTour . " FCFA/jour × " . $periodicite . " jours)\n\n" .
+                "• Déjà payé par vous : " . number_format($montantDejaCotise, 0, ',', ' ') . " FCFA\n" .
+                "• Reste à payer : " . number_format($montantRestantACollecter, 0, ',', ' ') . " FCFA\n\n" .
+                ($nbRetards > 0 ? "• Vous avez " . $nbRetards . " retard(s) à régler en priorité\n\n" : "") .
+                "💡 Après règlement des retards, votre paiement contribuerait " . 
+                number_format($montantPourTourActuel, 0, ',', ' ') . " FCFA au tour actuel,\n" .
+                "   mais vous ne devez payer que " . 
+                number_format($montantRestantACollecter, 0, ',', ' ') . " FCFA pour ce tour.\n\n" .
+                "Montant maximum autorisé : " . 
+                number_format(($montantRestantACollecter + ($nbRetards * $montantParTour)) * 1.02, 0, ',', ' ') . " FCFA (avec frais 2%)"
+            );
+        }
+
+        // ========== FIN DE LA VÉRIFICATION ==========
+
+        // ========== VÉRIFICATION : LIMITES KYC (JOURNALIÈRE + MENSUELLE) ==========
+
+        // Récupérer les limites journalière ET mensuelle
+        $stmt9=$pdo->prepare("SELECT k.transaction_journaliere as limiteTransac,
+                                     k.transaction_mensuelle as limiteMensuelle 
+                             FROM participants as p 
+                             INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc 
+                             WHERE p.code_participant=?");
         $stmt9->execute([$data['code_participant']]);
         $niveau_kyc=$stmt9->fetch(PDO::FETCH_ASSOC);
 
-        //Récupérer le total des transactions journalière effectuée pour vérification
+        // Si transaction_mensuelle n'existe pas encore, utiliser des valeurs par défaut
+        if (!isset($niveau_kyc['limiteMensuelle']) || $niveau_kyc['limiteMensuelle'] == 0) {
+            $limites_mensuelles = [
+                1 => 100000,   // KYC1 : 100k/mois
+                2 => 500000,   // KYC2 : 500k/mois
+                3 => 2000000,  // KYC3 : 2M/mois
+                4 => 5000000   // KYC4 : 5M/mois
+            ];
+            
+            $id_niveau_query = $pdo->prepare("SELECT id_niveau_kyc FROM participants WHERE code_participant = ?");
+            $id_niveau_query->execute([$data['code_participant']]);
+            $niveau = $id_niveau_query->fetch(PDO::FETCH_ASSOC);
+            
+            $niveau_kyc['limiteMensuelle'] = $limites_mensuelles[$niveau['id_niveau_kyc']] ?? 100000;
+        }
+
+        //Récupérer le total des transactions journalière et mensuelle effectuée pour vérification
+        // Vérification JOURNALIÈRE (reset à minuit)
         $stmt10=$pdo->prepare("SELECT 
         COALESCE(
             (SELECT SUM(montant) 
             FROM cotisations 
-            WHERE code_participant =? AND code_tontine=?
-            AND date_paiement >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            WHERE code_participant =?
+            AND DATE(date_paiement) = CURDATE()
+            AND id_statut_paiement = 2), 0
+        ) +
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations_manquees  
+            WHERE code_participant =?
+            AND DATE(date_rattrapage) = CURDATE()
+            AND id_statut_paiement = 2), 0
+        ) AS total_transactions_jour");
+        $stmt10->execute([$data['code_participant'], $data['code_participant']]);
+        $transaction_24H= $stmt10->fetch(PDO::FETCH_ASSOC);
+
+        // Vérification MENSUELLE (reset le 1er du mois)
+        $stmt_mensuel = $pdo->prepare("SELECT 
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations 
+            WHERE code_participant = ?
+            AND YEAR(date_paiement) = YEAR(CURDATE())
+            AND MONTH(date_paiement) = MONTH(CURDATE())
             AND id_statut_paiement = 2), 0
         ) +
         COALESCE(
             (SELECT SUM(montant) 
             FROM cotisations_manquees 
-            WHERE code_participant =? AND code_tontine=?
-            AND date_rattrapage >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            WHERE code_participant = ?
+            AND YEAR(date_rattrapage) = YEAR(CURDATE())
+            AND MONTH(date_rattrapage) = MONTH(CURDATE())
             AND id_statut_paiement = 2), 0
-        ) AS total_transactions_24h");
-        $stmt10->execute([$data['code_participant'],$data['code_tontine'],$data['code_participant'],$data['code_tontine']]);
+        ) AS total_transactions_mois");
+        $stmt_mensuel->execute([$data['code_participant'], $data['code_participant']]);
+        $transaction_mois = $stmt_mensuel->fetch(PDO::FETCH_ASSOC);
 
-        $transaction_24H=$stmt10->fetch(PDO::FETCH_ASSOC);
-        
 
         if(!$tontine){
             throw new Exception("Cette tontine n'existe pas.");
@@ -242,11 +416,21 @@ function payer_cotisation(){
             //Corriger le calcul des frais ici après avoir corrigé au niveau de l'app
         }else if($data['montant']/1.02<$tontine['montant_cotisation']){
             throw new Exception("Veuillez saisir un montnant valide");
-        }elseif ($transaction_24H['total_transactions_24h']+$data['montant']/1.02>$niveau_kyc['limiteTransac']) {
+        }elseif ($transaction_24H['total_transactions_jour']+$data['montant']/1.02>$niveau_kyc['limiteTransac']) {
             throw new Exception("Le montant cotiser dépasse la limite journalière(".$niveau_kyc['limiteTransac'].") fixée pour votre profil");
+        }elseif ($transaction_mois['total_transactions_mois']+$data['montant']/1.02>$niveau_kyc['limiteMensuelle']) {
+            $reste_mois = $niveau_kyc['limiteMensuelle'] - $transaction_mois['total_transactions_mois'];
+            $premier_jour_mois_prochain = date('Y-m-01', strtotime('first day of next month'));
+            
+            throw new Exception(
+                "❌ Limite mensuelle dépassée !\n\n" .
+                "Limite mensuelle : " . number_format($niveau_kyc['limiteMensuelle'], 0, ',', ' ') . " FCFA\n" .
+                "Déjà utilisé ce mois : " . number_format($transaction_mois['total_transactions_mois'], 0, ',', ' ') . " FCFA\n" .
+                "Reste disponible : " . number_format(max(0, $reste_mois), 0, ',', ' ') . " FCFA\n\n" .
+                "💡 Quota renouvelé le " . date('d/m/Y', strtotime($premier_jour_mois_prochain)) . "."
+            );
         }
 
-        
 
         //Récupérer l'id du mode paiement
         $stmt1=$pdo->prepare("SELECT id_mode_paiement FROM mode_paiement WHERE libelle_mode_paiement=?");
@@ -257,12 +441,41 @@ function payer_cotisation(){
             throw new Exception("Mode paiement non pris en charge!");
         }
 
+        
+
         //Calculer le montant cotisé
         $montantCotiser =$data['montant']/1.02;//Correspond maintenant au montant frais exclus parce que dans le cas de paiement en avance le montant sera supérieur au montant fixé //$tontine['montant_cotisation'];
         //Calculer la commission
         $commission = $data['montant'] - $montantCotiser;
         $montantRestant = $montantCotiser;
         $montantParTour = $tontine['montant_cotisation'];
+
+        // ========== FIN VÉRIFICATIONS KYC ==========
+
+        //Si mode de paiement Wallet Djarra Mettre a jour
+        if($data['libelle_mode_paiement']==="Wallet Djarra"){
+            //Vérifie d'abord si fond suffisant donc récupérer d'abord
+            $u=$pdo->prepare("SELECT solde_participant FROM wallet_participant WHERE code_participant=?");
+            $u->execute([$data['code_participant']]);
+            $row=$u->fetch(PDO::FETCH_ASSOC);
+            if($row['solde_participant']<$montantCotiser){
+                throw new Exception("Montant insuffisant. Solde disponible : " . $row['solde_participant'] . " FCFA");
+            }
+            // Débiter le wallet participant
+            $maj1 = $pdo->prepare("UPDATE wallet_participant SET solde_participant = solde_participant - ? WHERE code_participant=?");
+            $maj1->execute([(float)$montantCotiser, $data['code_participant']]);
+            
+            // Historiser le débit
+            $historique = $pdo->prepare("INSERT INTO historique_wallet_participant 
+                (code_participant, type_operation, montant, description, date_operation, code_tontine) 
+                VALUES (?, 'Paiement cotisation', ?, ?, NOW(), ?)");
+            $historique->execute([
+                $data['code_participant'],
+                $montantCotiser,
+                "Cotisation tontine " . $data['code_tontine'],
+                $data['code_tontine']
+            ]);
+        }
 
         //Payer les tours manqués en priorité s'il y en a
         $stmt7=$pdo->prepare("SELECT * FROM cotisations_manquees WHERE id_statut_paiement=? AND code_tontine=? AND code_participant=? ORDER BY date_manquee ASC");
@@ -332,7 +545,7 @@ function payer_cotisation(){
         $maj->execute([(float)$montantCotiser, $codeTontine]);
 
         //Envoie du push pour notifier le paiement aux autres utilisateurs
-        envoyer_notification_paiement($data['code_tontine'],$data['code_participant'],$montantCotiser);
+        envoyer_notification_paiement($codeTontine,$data['code_participant'],$montantCotiser);
         
         $pdo->commit();
         send_response(true, "Paiement éffectué avec succès !");
@@ -489,13 +702,13 @@ function voir_mes_cotisations(){
         ORDER BY date_reference DESC"
     );
 
-$stmt1->execute([
-    $data['code_participant'], 
-    $data['code_tontine'],
-    $data['code_participant'], 
-    $data['code_tontine']
-]);
-$cotisations = $stmt1->fetchAll(PDO::FETCH_ASSOC);
+    $stmt1->execute([
+        $data['code_participant'], 
+        $data['code_tontine'],
+        $data['code_participant'], 
+        $data['code_tontine']
+    ]);
+    $cotisations = $stmt1->fetchAll(PDO::FETCH_ASSOC);
 
     if(!$cotisations){
         send_response(false,"Vous n'avez encore payé aucune cotisation");
@@ -595,4 +808,112 @@ function total_penalite(){
         send_response(false,"Vous avez cotisé au total: ",0);
     }
     send_response(true,"Vous avez cotisé au total: ",$totalPenalite['total_penalite']);
+}
+
+//Voir repartition du montant à cotiser
+function repartition_cotisation(){
+
+    verifier_token();
+
+    $data=json_decode(file_get_contents('php://input'),true);
+    if(!isset($data['code_participant'],$data['code_tontine'],$data['montant']) || empty($data['code_participant']) || empty($data['code_tontine']) || empty($data['montant'])){
+        send_response(false,"Vérifier tout les champs");
+    }
+
+    $code_tontine=$data['code_tontine'];
+    $code_participant=$data['code_participant'];
+    $montant=$data['montant'];
+
+    $tour_en_cour_payable=false;
+
+
+    $pdo=getDb();
+
+    try {
+        //Vérifier l'existance de la tontine
+        $stmt4=$pdo->prepare("SELECT * FROM tontine WHERE code_tontine=?");
+        $stmt4->execute([$data['code_tontine']]);
+        $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
+
+        if(!$tontine){
+            send_response(false,"Cette tontine n'existe pas");
+        }
+        // ✅ RECOMMANDÉ
+        // 1. Récupérer dernière distribution
+        $stmt_date = $pdo->prepare("SELECT date_paiement FROM paiement_tour WHERE code_tontine = ? ORDER BY date_paiement DESC LIMIT 1");
+        $stmt_date->execute([$code_tontine]);
+        $derniere_distrib = $stmt_date->fetch(PDO::FETCH_ASSOC);
+
+        // 2. Compter cotisations manquées
+        if ($derniere_distrib) {
+            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ? AND date_manquee > ?");
+            $stmt1->execute([$code_tontine, $code_participant, $derniere_distrib['date_paiement']]);
+        } else {
+            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ?");
+            $stmt1->execute([$code_tontine, $code_participant]);
+        }
+        $retards=$stmt1->fetch(PDO::FETCH_ASSOC);
+
+        $nombre_retards = (int)$retards['nb_retards'];
+
+        // ✅ ÉTAPE 3 : SIMULER LA RÉPARTITION (comme payer_cotisation le ferait)
+        $montantRestant = $montant;  // Montant net saisi
+        
+        $montantParTour = $tontine['montant_cotisation'];
+        // 3.1 - Retards en priorité
+        $montant_pour_retards = min($nombre_retards * $montantParTour, $montantRestant);
+        $retards_payes = floor($montant_pour_retards / $montantParTour);
+        $montantRestant -= ($retards_payes * $montantParTour);
+        
+        // 3.2 - Tour actuel
+        $tour_actuel_payable = 0;
+        $situation_tour = "Paiement impossible";
+        
+        if ($montantRestant >= $montantParTour) {
+            $tour_actuel_payable = 1;
+            $situation_tour = "Payable";
+            $montantRestant -= $montantParTour;
+        }
+        
+        // 3.3 - Tours en avance
+        $tours_avance = floor($montantRestant / $montantParTour);
+        $montant_pour_avance = $tours_avance * $montantParTour;
+        $montantRestant -= $montant_pour_avance;
+
+        // ✅ ÉTAPE 4 : CALCULER LES FRAIS (2% sur le montant effectif)
+        $total_tours = $retards_payes + $tour_actuel_payable + $tours_avance;
+        $montant_effectif = $total_tours * $montantParTour;
+        $frais_totaux = $montant_effectif * 0.02;  // 2%
+        $total_transaction = $montant_effectif + $frais_totaux;
+
+        // ✅ RÉPONSE : PREVIEW DE LA RÉPARTITION
+        send_response(true, "Aperçu de la répartition", [
+            // Infos saisie
+            "montant_saisi" => $montant,
+            "montant_par_tour" => $montantParTour,
+            
+            // Répartition détaillée
+            "cotisations_manquees" => $nombre_retards,
+            "retards_payes" => $retards_payes,
+            "montant_retards" => $retards_payes * $montantParTour,
+            
+            "tour_actuel_payable" => $tour_actuel_payable,
+            "situation_tour" => $situation_tour,
+            "montant_tour_actuel" => $tour_actuel_payable * $montantParTour,
+            
+            "tours_avance" => $tours_avance,
+            "montant_avance" => $montant_pour_avance,
+            
+            // Totaux
+            "total_tours_payes" => $total_tours,
+            "montant_utilise" => $montant_effectif,
+            "montant_non_utilise" => round($montantRestant, 2),
+            
+            // Frais et total
+            "frais_totaux" => round($frais_totaux, 2),
+            "total_transaction" => round($total_transaction, 2)
+        ]);
+    } catch (\Throwable $e) {
+        send_response(false, $e->getMessage());
+    } 
 }

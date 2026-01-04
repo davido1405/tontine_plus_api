@@ -26,6 +26,9 @@ if(isset($_GET['action'])){
         case 'total_penalite':
             total_penalite();
             break;
+        case 'preview_cotisation':
+            repartition_cotisation();
+            break;
         default:
             send_response(false,"Action incconue pour la cotisation");
     }

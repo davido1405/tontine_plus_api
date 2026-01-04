@@ -16,6 +16,15 @@ function code_participant(){
     return $prefix."-".$date."-".$rand;
 }
 
+function code_wallet_participant(){
+    $prefix= "WP";
+    $date=date('ymd');
+    $rand=strtoupper(substr(uniqid(), -5));
+
+    return $prefix."-".$date."-".$rand;
+}
+
+//Inscription de nouveau participant
 function register_participant() {
     $data = json_decode(file_get_contents("php://input"), true);
 
@@ -23,9 +32,21 @@ function register_participant() {
         send_response(false, "Veuillez vérifier tout les champs");
     }
 
+    // Ajouter des validations
+    if (!preg_match('/^\+?[0-9]{8,15}$/', $data['mobile'])) {
+        send_response(false, "Numéro de téléphone invalide");
+    }
+
+    if (strlen($data['password']) < 6) {
+        send_response(false, "Le mot de passe doit contenir au moins 6 caractères");
+    }
+
+    $pdo = getDB();
     try {
-        $pdo = getDB();
+        $pdo->beginTransaction();
+
         $code_parti=code_participant();
+        $code_wallet_parti=code_wallet_participant();
 
         //D'abord vérifier qu'un compte n'existe pas déjà pour le numéro renseigné
         $verif=$pdo->prepare("SELECT * FROM participants WHERE numro_mobile_money=?");
@@ -36,11 +57,23 @@ function register_participant() {
             send_response(false,"Vous avez déjà un compte veuillez vous connecter ou réinitialisez votre code Djarra Finances. Merci");
         }
 
+        //Créer maintenant le profil du participant
         $stmt = $pdo->prepare("INSERT INTO participants (code_participant, nom_participant, prenoms_participant, mot_passe, numro_mobile_money) VALUES (?, ?, ?, ?, ?)");
         $stmt-> execute([$code_parti,$data['nom'],$data['prenom'],password_hash($data['password'],PASSWORD_DEFAULT),$data['mobile']]);
+        
+        //Ouvrir un wallet participant
+        // ✅ CORRECT : 3 colonnes = 3 valeurs
+        $stmt1=$pdo->prepare("INSERT INTO wallet_participant(code_wallet_participant, code_participant, solde_participant) VALUES(?,?,?)");
+        $stmt1->execute([$code_wallet_parti, $code_parti, 0.00]);
+        //                                                    ↑ Ajouter le solde initial
+
         $token=generer_token_utilisateur($code_parti,$data['mobile']);
+
+        $pdo->commit();
+
         send_response(true, "Participant inscrit avec succès",[
             "code_participant" => $code_parti,
+            "code_wallet_participant"=>$code_wallet_parti,
             "nom"=> $data['nom'],
             "prenoms"=>$data['prenom'],
             "numero"=>$data['mobile'],
@@ -50,7 +83,11 @@ function register_participant() {
             "jwt_token"=>$token
         ]);
     } catch (PDOException $e) {
-        send_response(false, "Erreur : " . $e->getMessage());
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log("Erreur inscription: " . $e->getMessage());
+        send_response(false, "Une erreur est survenue lors de l'inscription");
     }
 }
 
@@ -72,8 +109,8 @@ function login_participant() {
 
     try {
         $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant,k.libelle as niveau_kyc FROM participants p
-        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc WHERE numro_mobile_money=?");
+        $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant,k.libelle as niveau_kyc,w.code_wallet_participant as compte_participant FROM participants p
+        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc INNER JOIN wallet_participant as W ON w.code_participant=p.code_participant WHERE numro_mobile_money=?");
         $stmt->execute([$data['numero_participant']]);
         $participant = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -93,10 +130,11 @@ function login_participant() {
                 $token=generer_token_utilisateur($participant['code_participant'],$participant['numro_mobile_money']);
                 // Tu peux retourner plus de données ici si tu veux (nom, type, etc.)
                 send_response(true,"Connexion réussie",[
-                    "code_participant" => $participant['code_participant'],
-                    "nom" => $participant['nom_participant'],
-                    "prenoms" => $participant['prenoms_participant'],
-                    "type" => $participant['libelle_participant'],
+                    "code_participant" =>$participant['code_participant'],
+                    "code_wallet_participant"=>$participant['compte_participant'],
+                    "nom" =>$participant['nom_participant'],
+                    "prenoms" =>$participant['prenoms_participant'],
+                    "type" =>$participant['libelle_participant'],
                     "numero"=>$participant['numro_mobile_money'],
                     "indice_solvabilite"=>$participant['indice_solvabilite'],
                     "niveau_kyc"=>$participant['niveau_kyc'],
@@ -109,6 +147,7 @@ function login_participant() {
                 // Retourne quand même les infos sans tontine
                 send_response(true,"Connexion réussie (pas encore de tontine)",[
                     "code_participant" => $participant['code_participant'],
+                    "code_wallet_participant"=>$participant['compte_participant'],
                     "nom" => $participant['nom_participant'],
                     "prenoms" => $participant['prenoms_participant'],
                     "type" => $participant['libelle_participant'],
@@ -140,14 +179,15 @@ function get_profil() {
 
     try {
         $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant,k.libelle as niveau_kyc FROM participants p
-        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc WHERE p.code_participant=?");
+        $stmt = $pdo->prepare("SELECT p.*,t.libelle_participant,k.libelle as niveau_kyc,w.code_wallet_participant as compte_participant FROM participants p
+        INNER JOIN type_participants t ON t.id_type_participant=p.id_type_participant INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc INNER JOIN wallet_participant as W ON w.code_participant=p.code_participant WHERE p.code_participant=?");
         $stmt->execute([$data['code_participant']]);
         $participant = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($participant) {
             send_response(true,"Profil récupéré avec succès", [
                 "code_participant" => $participant['code_participant'],
+                "code_wallet_participant"=>$participant['compte_participant'],
                 "nom" => $participant['nom_participant'],
                 "prenoms" => $participant['prenoms_participant'],
                 "type" => $participant['libelle_participant'],
@@ -498,4 +538,80 @@ function demande_upgrade_kyc() {
         }
         send_response(false, "Erreur : " . $e->getMessage());
     }
+}
+
+function info_wallet_participant(){
+    //verifier_token();
+
+    $data=json_decode(file_get_contents("php://input"),true);
+
+    if(!isset($data['code_participant']) || empty($data['code_participant'])){
+        send_response(false,"Veuillez vérifier tous les champs");
+    }
+
+    $pdo=getDB();
+
+    //Récupérer le solde du participant
+            $stmt0=$pdo->prepare("SELECT solde_participant FROM wallet_participant WHERE code_participant=?");
+            $stmt0->execute([$data['code_participant']]);
+            $compte_participant=$stmt0->fetch(PDO::FETCH_ASSOC);
+
+    // Récupérer les limites journalière ET mensuelle
+        $stmt1=$pdo->prepare("SELECT k.transaction_journaliere as limiteTransac,
+                                     k.transaction_mensuelle as limiteMensuelle 
+                             FROM participants as p 
+                             INNER JOIN niveau_kyc as k ON p.id_niveau_kyc=k.id_niveau_kyc 
+                             WHERE p.code_participant=?");
+        $stmt1->execute([$data['code_participant']]);
+        $niveau_kyc=$stmt1->fetch(PDO::FETCH_ASSOC);
+    //Récupérer le transactions journaliere et mensuelle éffectuées
+    
+    //Transactions journaliere
+    $stmt2=$pdo->prepare("SELECT 
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations 
+            WHERE code_participant =?
+            AND DATE(date_paiement) = CURDATE()
+            AND id_statut_paiement = 2), 0
+        ) +
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations_manquees  
+            WHERE code_participant =?
+            AND DATE(date_rattrapage) = CURDATE()
+            AND id_statut_paiement = 2), 0
+        ) AS total_transactions_jour");
+        $stmt2->execute([$data['code_participant'], $data['code_participant']]);
+        $transaction_24H= $stmt2->fetch(PDO::FETCH_ASSOC);
+
+    //Transaction mensuelle
+    $stmt3 = $pdo->prepare("SELECT 
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations 
+            WHERE code_participant = ?
+            AND YEAR(date_paiement) = YEAR(CURDATE())
+            AND MONTH(date_paiement) = MONTH(CURDATE())
+            AND id_statut_paiement = 2), 0
+        ) +
+        COALESCE(
+            (SELECT SUM(montant) 
+            FROM cotisations_manquees 
+            WHERE code_participant = ?
+            AND YEAR(date_rattrapage) = YEAR(CURDATE())
+            AND MONTH(date_rattrapage) = MONTH(CURDATE())
+            AND id_statut_paiement = 2), 0
+        ) AS total_transactions_mois");
+        $stmt3->execute([$data['code_participant'], $data['code_participant']]);
+        $transaction_mois = $stmt3->fetch(PDO::FETCH_ASSOC);
+
+send_response(true,"Information wallet participant",[
+    "solde_participant"=>$compte_participant['solde_participant'],
+    "transaction_journaliere"=>$transaction_24H['total_transactions_jour'],
+    "transaction_mois"=>$transaction_mois['total_transactions_mois'],
+    "limite_kyc_jour"=>$niveau_kyc['limiteTransac'],
+    "limite_kyc_mois"=>$niveau_kyc['limiteMensuelle']
+]);
+    
 }

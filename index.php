@@ -8,6 +8,13 @@ header("Access-Control-Allow-Origin: *");
 header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
+// Sécurité des headers
+header("X-Content-Type-Options: nosniff");
+header("X-Frame-Options: DENY");
+header("Content-Security-Policy: default-src 'self'");
+header("Strict-Transport-Security: max-age=31536000; includeSubDomains");
+header("Referrer-Policy: no-referrer");
+header("Permissions-Policy: geolocation=(), microphone=()");
 
 // Gérer les prévols (pré-requêtes OPTIONS)
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {

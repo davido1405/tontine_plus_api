@@ -702,8 +702,8 @@ function ordrePaiement() {
 }
 
 
-//Faire un retrait
-function retrait(){
+//Ancienne version de la fonction pour les retraits
+function retrait_ancien(){
 
     //Vérifier le token utilisateur avant tous !
     $decoder=verifier_token();
@@ -834,7 +834,7 @@ function retrait(){
         }
         $pdo->commit();
 
-        //Récupérer les nouvelles valeurs de tour_actuel, le nombre de participant et l'était de la tontine
+        //Récupérer les nouvelles valeurs de tour_actuel, le nombre de participant et l'état de la tontine
         $u8 =$pdo->prepare("SELECT nombre_participant,tour_actuel,etat_tontine FROM tontine WHERE code_tontine=?");
         $u8->execute([$data['code_tontine']]);
         $newP=$u8->fetch(PDO::FETCH_ASSOC);
@@ -866,3 +866,87 @@ function retrait(){
         send_response(false, $e->getMessage());
     }
 }
+
+//Modifié pour un retrait depuis le wallet participant
+function retrait(){
+
+    //Vérifier le token utilisateur avant tous !
+    $decoder=verifier_token();
+
+
+    $data = json_decode(file_get_contents("php://input"), true);
+    if (empty($data['libelle_mode_paiement']) ||empty($data['montant']) || empty($data['code_participant'])) {
+        send_response(false, "Veuillez remplir tous les champs !");
+    }
+
+
+    $code_participant=$data['code_participant'];
+    $montant=(float)$data['montant'];
+    $mode_paiement=$data['libelle_mode_paiement'];
+    
+
+    $pdo = getDB();
+    try {
+        $pdo->beginTransaction(); 
+
+        // 1) Vérifier le solde AVEC verrouillage
+        $check_solde = $pdo->prepare("SELECT solde_participant 
+                                    FROM wallet_participant 
+                                    WHERE code_participant = ? 
+                                    FOR UPDATE");
+        $check_solde->execute([$code_participant]);
+        $wallet = $check_solde->fetch(PDO::FETCH_ASSOC);
+
+        // 2) Valider le solde
+        if ($wallet['solde_participant'] < $montant) {
+            throw new Exception("Solde insuffisant. Disponible : " . $wallet['solde_participant'] . " FCFA");
+        }
+
+        // 3) Débiter
+        $debiter = $pdo->prepare("UPDATE wallet_participant 
+                                SET solde_participant = solde_participant - ? 
+                                WHERE code_participant = ?");
+        $debiter->execute([$montant, $code_participant]);
+
+        //4) Historiser le débit
+            $historique = $pdo->prepare("INSERT INTO historique_wallet_participant 
+                (code_participant, type_operation, montant, description, date_operation, code_tontine) 
+                VALUES (?, 'Retrait', ?, ?, NOW())");
+            $historique->execute([
+                $code_participant,
+                $montant,
+                "Retrait de ".$montant. "FCFA par ".$mode_paiement,
+            ]);
+
+            $phrases = [
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA effectué avec succès. Avec Djarra ton cœur bat pas ! 😏",
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA 💸 effectué. Le paiya est clair ! 🚀",
+                "Retrait de " . number_format($montant, 0, ',', ' ') . " FCFA effectué ✅. T'es fan ou bien ! 😎",
+                "Montant de " . number_format($montant, 0, ',', ' ') . " FCFA retiré avec succès. Djarra c'est la ref 😁"
+            ];
+
+            $message = $phrases[array_rand($phrases)];
+
+        $pdo->commit();
+
+        // 1) Récupérer le nouveau solde APRÈS le commit
+        $nouveau_solde_query = $pdo->prepare("SELECT solde_participant 
+                                            FROM wallet_participant 
+                                            WHERE code_participant = ?");
+        $nouveau_solde_query->execute([$code_participant]);
+        $nouveau_solde = $nouveau_solde_query->fetch(PDO::FETCH_ASSOC);
+
+        // 2) Envoyer une réponse complète
+        send_response(true, $message, [
+            'montant_retire' => $montant,
+            'ancien_solde' => $wallet['solde_participant'],
+            'nouveau_solde' => $nouveau_solde['solde_participant'],
+            'mode_paiement' => $mode_paiement
+        ]);
+
+        }catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        send_response(false, $e->getMessage());
+    }
+}
+

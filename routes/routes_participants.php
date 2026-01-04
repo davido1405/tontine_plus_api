@@ -37,6 +37,9 @@ if(isset($_GET['action'])){
         case 'cotisations_manquees':
             cotisation_manques();
             break;
+        case 'infos_wallet_participant':
+            info_wallet_participant();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 
