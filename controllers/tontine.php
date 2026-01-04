@@ -282,13 +282,9 @@ function verifierInvitation(){
 }
 
 
-//Details d'une tontine
-
 function get_tontine_details() {
 
-    //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
-
+    $decoder = verifier_token();
 
     $data = json_decode(file_get_contents("php://input"), true);
 
@@ -298,37 +294,91 @@ function get_tontine_details() {
 
     try {
         $pdo = getDB();
-        $stmt = $pdo->prepare("SELECT o.code_tontine, o.nom_tontine, o.montant_cotisation, o.nombre_participant, f.libelle_frequence,p.libelle_frequence_paiement,o.statut,t.libelle_type_tontine,o.date_creation,o.etat_tontine,w.code_wallet
+        
+        // ✅ SOLUTION : Utiliser des sous-requêtes au lieu de JOIN avec COUNT
+        $stmt = $pdo->prepare("SELECT 
+                                    o.code_tontine, 
+                                    o.nom_tontine, 
+                                    o.montant_cotisation, 
+                                    o.nombre_participant, 
+                                    o.tour_actuel, 
+                                    o.statut,
+                                    o.date_creation, 
+                                    o.etat_tontine,
+                                    f.libelle_frequence,
+                                    p.libelle_frequence_paiement, 
+                                    t.libelle_type_tontine,
+                                    w.code_wallet,
+                                    (SELECT COUNT(*) 
+                                     FROM participer 
+                                     WHERE code_tontine = o.code_tontine) as participant_inscrit
                                FROM tontine as o
-                               INNER JOIN type_tontine as t
-                               ON o.id_type_tontine=t.id_type_tontine
-                               INNER JOIN frequence as f
-                               ON o.id_frequence=f.id_frequence
-                               INNER JOIN frequence_paiement as p
-                               ON o.id_frequence_paiement=p.id_frequence_paiement
-                               INNER JOIN wallet_tontine as w
-                               ON w.code_tontine=o.code_tontine
+                               INNER JOIN type_tontine as t ON o.id_type_tontine = t.id_type_tontine
+                               INNER JOIN frequence as f ON o.id_frequence = f.id_frequence
+                               INNER JOIN frequence_paiement as p ON o.id_frequence_paiement = p.id_frequence_paiement
+                               INNER JOIN wallet_tontine as w ON w.code_tontine = o.code_tontine
                                WHERE o.code_tontine = ?");
+        
         $stmt->execute([$data['code_tontine']]);
         $tontine = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($tontine) {
-            send_response(true, "Tontine récupéré avec succès", [
-                "code_tontine" => $tontine['code_tontine'],
-                "nom" => $tontine['nom_tontine'],
-                "montant" => $tontine['montant_cotisation'],
-                "nombre_participant" => $tontine['nombre_participant'],
-                "frequence" => $tontine['libelle_frequence'],
-                "frequence_paiement"=>$tontine['libelle_frequence_paiement'],
-                "statut" => $tontine['statut'],
-                "type" => $tontine['libelle_type_tontine'],
-                "etat_tontine"=>$tontine['etat_tontine'],
-                "date_creation" => $tontine['date_creation'],
-                "code_wallet" =>$tontine['code_wallet']
-            ]);
-        } else {
+        if (!$tontine) {
             send_response(false, "Tontine introuvable.");
         }
+
+        // Variables
+        $frequence_paiement = $tontine['libelle_frequence_paiement'];
+        $frequence_cotisation = $tontine['libelle_frequence'];
+        $nombre_participant = $tontine['nombre_participant'];
+        $montant_cotisation = $tontine['montant_cotisation'];
+
+        // Calculs de fréquence
+        switch ($frequence_paiement) {
+            case "Hebdomadaire":
+                $duree_tour = 7;
+                break;
+            case "Mensuelle":
+                $duree_tour = 30;
+                break;
+            case "Trimestrielle":
+                $duree_tour = 90;
+                break;
+            default:
+                $duree_tour = 7;
+        }
+
+        switch ($frequence_cotisation) {
+            case "Journalière":
+                $nombre_cotisation = $duree_tour;
+                break;
+            case "Hebdomadaire":
+                $nombre_cotisation = ceil($duree_tour / 7);
+                break;
+            case "Mensuelle":
+                $nombre_cotisation = ceil($duree_tour / 30);
+                break;
+            default:
+                $nombre_cotisation = $duree_tour;
+        }
+
+        $cagnotte = $nombre_participant * $montant_cotisation * $nombre_cotisation;
+
+        send_response(true, "Tontine récupérée avec succès", [
+            "code_tontine" => $tontine['code_tontine'],
+            "nom" => $tontine['nom_tontine'],
+            "montant" => $tontine['montant_cotisation'],
+            "nombre_participant" => $tontine['nombre_participant'],  
+            "tour_actuel" => $tontine['tour_actuel'] ?? '0',  
+            "frequence" => $tontine['libelle_frequence'],
+            "frequence_paiement" => $tontine['libelle_frequence_paiement'],
+            "cagnotte" => $cagnotte,
+            "participant_inscrit" => $tontine['participant_inscrit'],
+            "statut" => $tontine['statut'],
+            "type" => $tontine['libelle_type_tontine'],
+            "etat_tontine" => $tontine['etat_tontine'],
+            "date_creation" => $tontine['date_creation'],
+            "code_wallet" => $tontine['code_wallet']
+        ]);
 
     } catch (PDOException $e) {
         send_response(false, "Erreur : " . $e->getMessage());
