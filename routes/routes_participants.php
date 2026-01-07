@@ -43,6 +43,9 @@ if(isset($_GET['action'])){
         case 'retirer':
             retrait();
             break;
+        case 'vue_globale':
+            heat_map_transaction();
+            break;
         default:
             send_response(false,"Action incconue pour participant");
 

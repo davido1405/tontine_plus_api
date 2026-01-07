@@ -701,56 +701,155 @@ function transactions(){
 //Récupérer les ordre de tour
 function ordrePaiement() {
 
-    //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
-
+    $decoder = verifier_token();
 
     $data = json_decode(file_get_contents("php://input"), true);
 
     if (!isset($data['code_tontine']) || empty($data['code_tontine'])) {
         send_response(false, "Veuillez fournir le code de la tontine !");
-        exit;
+        return;
     }
 
-    $pdo = getDB();
+    try {
+        $pdo = getDB();
 
-    $sql = "SELECT p.code_participant, d.nom_participant, d.prenoms_participant, o.ordre, o.statut,o.date_tour
-            FROM participer AS p
-            JOIN participants AS d 
-                ON d.code_participant = p.code_participant
-            LEFT JOIN ordre_tirage AS o 
-                ON o.code_tontine = p.code_tontine 
-               AND o.code_participant = p.code_participant
-            JOIN tontine AS t
-                ON t.code_tontine = p.code_tontine
-            WHERE p.code_tontine = ? 
-            GROUP BY p.code_participant, d.nom_participant, d.prenoms_participant, o.ordre, o.statut
-            ORDER BY o.ordre ASC";
+        // ✅ Récupérer les infos de la tontine
+        $stmtTontine = $pdo->prepare("
+            SELECT 
+                t.code_tontine,
+                t.montant_cotisation,
+                t.nombre_participant,
+                t.tour_actuel,
+                f.libelle_frequence,
+                fp.libelle_frequence_paiement
+            FROM tontine t
+            INNER JOIN frequence f ON t.id_frequence = f.id_frequence
+            INNER JOIN frequence_paiement fp ON t.id_frequence_paiement = fp.id_frequence_paiement
+            WHERE t.code_tontine = ?
+        ");
+        $stmtTontine->execute([$data['code_tontine']]);
+        $tontine = $stmtTontine->fetch(PDO::FETCH_ASSOC);
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$data['code_tontine']]);
-    $resultats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (!$tontine) {
+            send_response(false, "Tontine introuvable");
+            return;
+        }
 
-    if ($resultats) {
-        $utilisateurs = [];
+        // Variables
+        $frequence_paiement = $tontine['libelle_frequence_paiement'];
+        $frequence_cotisation = $tontine['libelle_frequence'];
+        $nombre_participant = $tontine['nombre_participant'];
+        $montant_cotisation = $tontine['montant_cotisation'];
+
+        // Calculs de fréquence
+        switch ($frequence_paiement) {
+            case "Hebdomadaire":
+                $duree_tour = 7;
+                break;
+            case "Mensuelle":
+                $duree_tour = 30;
+                break;
+            case "Trimestrielle":
+                $duree_tour = 90;
+                break;
+            default:
+                $duree_tour = 7;
+        }
+
+        switch ($frequence_cotisation) {
+            case "Journalière":
+                $nombre_cotisation = $duree_tour;
+                break;
+            case "Hebdomadaire":
+                $nombre_cotisation = ceil($duree_tour / 7);
+                break;
+            case "Mensuelle":
+                $nombre_cotisation = ceil($duree_tour / 30);
+                break;
+            default:
+                $nombre_cotisation = $duree_tour;
+        }
+
+        $cagnotte = $nombre_participant * $montant_cotisation * $nombre_cotisation;
+        $tour_actuel = $tontine['tour_actuel'] ?? 0;
+
+        // ✅ CORRECTION : INNER JOIN pour ne récupérer QUE si ordre_tirage existe
+        $sql = "SELECT 
+                    o.code_participant, 
+                    d.nom_participant, 
+                    d.prenoms_participant, 
+                    o.ordre,
+                    o.statut,
+                    o.date_tour,
+                    CASE 
+                        WHEN o.statut = 2 THEN 'complete'
+                        WHEN o.statut = 1 THEN 'en_cours'
+                        ELSE 'a_venir'
+                    END as etat
+                FROM ordre_tirage AS o
+                INNER JOIN participants AS d 
+                    ON d.code_participant = o.code_participant
+                WHERE o.code_tontine = ? 
+                ORDER BY o.ordre ASC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$data['code_tontine']]);
+        $resultats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // ✅ Si ordre_tirage est vide, retourner liste vide
+        if (empty($resultats)) {
+            send_response(true, "Ordre de paiement non généré", [
+                'beneficiaires' => [],
+                'statistiques' => [
+                    'tours_completes' => 0,
+                    'total_tours' => 0,
+                    'tour_actuel' => 0,
+                    'montant_cagnotte' => (double)$cagnotte
+                ]
+            ]);
+            return;
+        }
+
+        // ✅ Traiter les résultats
+        $beneficiaires = [];
+        $tours_completes = 0;
+        $total_tours = count($resultats);
+
         foreach ($resultats as $resultat) {
-            $utilisateurs[] = [
-                "code_participant"   => $resultat['code_participant'],
-                "nom_participant"    => $resultat['nom_participant'],
-                "prenoms_participant"=> $resultat['prenoms_participant'],
-                "ordre"              => $resultat['ordre'],
-                "statut"             => $resultat['statut'],
-                "date_prevu"=>$resultat['date_tour']
+            // Compter les tours complétés
+            if ($resultat['statut'] == 2) {
+                $tours_completes++;
+            }
+
+            $beneficiaires[] = [
+                "code_participant" => $resultat['code_participant'],
+                "nom_participant" => $resultat['nom_participant'],
+                "prenoms_participant" => $resultat['prenoms_participant'],
+                "ordre" => (int)$resultat['ordre'],
+                "statut" => (int)$resultat['statut'],
+                "etat" => $resultat['etat'],
+                "date_tour" => $resultat['date_tour'] ?? '',
+                "montant" => (double)$cagnotte
             ];
         }
-        send_response(true, "Ordre de paiement (tours à venir)", $utilisateurs);
-    } else {
-        send_response(false, "Aucun tour à venir trouvé");
+
+        // ✅ Retourner avec les statistiques
+        send_response(true, "Ordre de paiement", [
+            'beneficiaires' => $beneficiaires,
+            'statistiques' => [
+                'tours_completes' => $tours_completes,
+                'total_tours' => $total_tours,
+                'tour_actuel' => (int)$tour_actuel,
+                'montant_cagnotte' => (double)$cagnotte
+            ]
+        ]);
+
+    } catch (PDOException $e) {
+        send_response(false, "Erreur SQL : " . $e->getMessage());
+    } catch (Exception $e) {
+        send_response(false, "Erreur : " . $e->getMessage());
     }
-
-    exit;
 }
-
 
 //Ancienne version de la fonction pour les retraits
 function retrait_ancien(){

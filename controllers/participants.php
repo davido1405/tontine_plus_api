@@ -700,3 +700,106 @@ function retrait(){
         send_response(false, $e->getMessage());
     }
 }
+
+
+function heat_map_transaction() {
+    
+    verifier_token();
+    
+    $data = json_decode(file_get_contents('php://input'), true);
+    
+    if (!isset($data['code_participant'], $data['code_tontine'])) {
+        send_response(false, "Paramètres manquants");
+        return;
+    }
+
+    $code_tontine = $data['code_tontine'];
+    $code_participant = $data['code_participant'];
+
+    try {
+        $pdo = getDB();
+
+        $stmt = $pdo->prepare("
+            SELECT 
+                'cotisation_payee' as type_transaction,
+                c.montant as montant_transaction, 
+                c.date_paiement as date_transaction,
+                c.code_cotisation,
+                c.nombre_tour_avance as tour_avance,
+                'Payée' as statut
+            FROM cotisations c
+            WHERE c.code_participant = ? 
+            AND c.id_statut_paiement = 2
+            
+            UNION ALL
+            
+            SELECT 
+                'cotisation_manquee' as type_transaction,
+                cm.montant as montant_transaction, 
+                cm.date_manquee as date_transaction,
+                cm.code_cotisation_manquee as code_cotisation,
+                NULL as tour_avance,
+                'Manquée' as statut
+            FROM cotisations_manquees cm
+            WHERE cm.code_participant = ? 
+            AND cm.id_statut_paiement = 1
+            
+            UNION ALL
+            
+            SELECT 
+                'cotisation_rattrapee' as type_transaction,
+                cm.montant as montant_transaction, 
+                cm.date_rattrapage as date_transaction,
+                cm.code_cotisation_manquee as code_cotisation,
+                NULL as tour_avance,
+                'Rattrapée' as statut
+            FROM cotisations_manquees cm
+            WHERE cm.code_participant = ? 
+            AND cm.id_statut_paiement = 2
+            AND cm.date_rattrapage IS NOT NULL
+            
+            UNION ALL
+            
+            SELECT 
+                'tour_tontine' as type_transaction,
+                pt.montant as montant_transaction, 
+                pt.date_paiement as date_transaction,
+                CONCAT('PT', pt.id_paiement) as code_cotisation,
+                NULL as tour_avance,
+                'Tour' as statut
+            FROM paiement_tour pt
+            WHERE pt.code_tontine = ?
+            AND pt.id_statut_paiement = 2
+            
+            ORDER BY date_transaction DESC
+        ");
+
+        $stmt->execute([$code_participant, $code_participant, $code_participant, $code_tontine]);
+        $resultats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        $par_date = [];
+        
+        foreach ($resultats as $transaction) {
+            $date = date('Y-m-d', strtotime($transaction['date_transaction']));
+            
+            if (!isset($par_date[$date])) {
+                $par_date[$date] = [
+                    'date' => $date,
+                    'count' => 0,
+                    'transactions' => []
+                ];
+            }
+            
+            $par_date[$date]['transactions'][] = $transaction;
+            $par_date[$date]['count']++;
+        }
+
+        // ✅ TOUJOURS RETOURNER UN OBJET, JAMAIS UN TABLEAU VIDE
+        send_response(true, "Transactions", [
+            'transactions' => array_values($par_date)  // ✅ Objet avec clé 'transactions'
+        ]);
+
+    } catch (Exception $e) {
+        send_response(false, "Erreur : " . $e->getMessage());
+    }
+}
