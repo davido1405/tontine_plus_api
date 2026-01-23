@@ -189,8 +189,6 @@ function envoyer_notification_paiement($code_tontine,$code_participant,$montantC
     }
 }
 
-
-
 //Fonction pour payer les cotisations
 function payer_cotisation(){
 
@@ -208,7 +206,7 @@ function payer_cotisation(){
 
         $pdo->beginTransaction();
         //Vérifier l'existance de la tontine
-        $stmt4=$pdo->prepare("SELECT t.*,f.libelle_frequence_paiement as frequence_paiement, c.libelle_frequence as frequence_cotisation FROM tontine t INNER JOIN frequence_paiement as f ON f.id_frequence_paiement=t.id_frequence INNER JOIN frequence as c ON c.id_frequence=t.id_frequence WHERE t.code_tontine=?");
+        $stmt4=$pdo->prepare("SELECT t.*,f.libelle_frequence_paiement as frequence_paiement, c.libelle_frequence as frequence_cotisation FROM tontine t INNER JOIN frequence_paiement as f ON f.id_frequence_paiement=t.id_frequence_paiement INNER JOIN frequence as c ON c.id_frequence=t.id_frequence WHERE t.code_tontine=?");
         $stmt4->execute([$data['code_tontine']]);
         $tontine=$stmt4->fetch(PDO::FETCH_ASSOC);
 
@@ -239,6 +237,7 @@ function payer_cotisation(){
 
         // 1) Calculer le montant THÉORIQUE du tour actuel
         $montantParTour = $tontine['montant_cotisation'];
+
         $nbParticipants = (int)$tontine['nombre_participant'];
 
         $montantTheoriqueTour = $montantParTour * $nombre_cotisation;
@@ -263,10 +262,10 @@ function payer_cotisation(){
             $date_debut_tour = $derniere_distribution['dernier_paiement'];
         } else {
             // Premier tour
-            $stmt_date = $pdo->prepare("SELECT date_creation FROM tontine WHERE code_tontine = ?");
+            $stmt_date = $pdo->prepare("SELECT date_participation FROM participer WHERE code_tontine = ?  ORDER BY date_participation DESC LIMIT 1 ");
             $stmt_date->execute([$data['code_tontine']]);
             $date_tontine = $stmt_date->fetch(PDO::FETCH_ASSOC);
-            $date_debut_tour = $date_tontine['date_creation'] ?? date('Y-m-d H:i:s');
+            $date_debut_tour = $date_tontine['date_participation'] ?? date('Y-m-d H:i:s');
         }
 
         error_log("Tour " . $tontine['tour_actuel'] . " - Date de référence : $date_debut_tour");
@@ -448,7 +447,6 @@ function payer_cotisation(){
         //Calculer la commission
         $commission = $data['montant'] - $montantCotiser;
         $montantRestant = $montantCotiser;
-        $montantParTour = $tontine['montant_cotisation'];
 
         // ========== FIN VÉRIFICATIONS KYC ==========
 
@@ -644,7 +642,7 @@ function payer_penalite() {
     }catch(Throwable $e){
         if ($pdo->inTransaction()) $pdo->rollBack();
         send_response(false, $e->getMessage());
-};
+    };
 }
 
 
@@ -846,11 +844,11 @@ function repartition_cotisation(){
 
         // 2. Compter cotisations manquées
         if ($derniere_distrib) {
-            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ? AND date_manquee > ?");
-            $stmt1->execute([$code_tontine, $code_participant, $derniere_distrib['date_paiement']]);
+            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ? AND date_manquee > ? AND id_statut_paiement=?");
+            $stmt1->execute([$code_tontine, $code_participant, $derniere_distrib['date_paiement'], 1]);
         } else {
-            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ?");
-            $stmt1->execute([$code_tontine, $code_participant]);
+            $stmt1 = $pdo->prepare("SELECT COUNT(*) as nb_retards FROM cotisations_manquees WHERE code_tontine = ? AND code_participant = ? AND id_statut_paiement=?");
+            $stmt1->execute([$code_tontine, $code_participant,1]);
         }
         $retards=$stmt1->fetch(PDO::FETCH_ASSOC);
 

@@ -323,7 +323,7 @@ function monTour(){
 function recupere_tour_actuel() {
 
     //Vérifier le token utilisateur avant tous !
-    $decoder=verifier_token();
+    //$decoder=verifier_token();
 
     $data = json_decode(file_get_contents("php://input"), true);
 
@@ -616,7 +616,7 @@ function info_wallet_participant(){
             "limite_kyc_jour"=>$niveau_kyc['limiteTransac'],
             "limite_kyc_mois"=>$niveau_kyc['limiteMensuelle']
         ]);
-    }
+}
 
 //Modifié pour un retrait depuis le wallet participant
 function retrait(){
@@ -761,12 +761,12 @@ function heat_map_transaction() {
             UNION ALL
             
             SELECT 
-                'tour_tontine' as type_transaction,
+                'distribution' as type_transaction,
                 pt.montant as montant_transaction, 
                 pt.date_paiement as date_transaction,
                 CONCAT('PT', pt.id_paiement) as code_cotisation,
                 NULL as tour_avance,
-                'Tour' as statut
+                'Distribuée' as statut
             FROM paiement_tour pt
             WHERE pt.code_tontine = ?
             AND pt.id_statut_paiement = 2

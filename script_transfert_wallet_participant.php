@@ -15,7 +15,9 @@ use Firebase\JWT\JWT;
     //}
 
     //$code_tontine=$data['code_tontine'];
-    $dateCourante=date('Ymd');
+    $dateCourante=date('Y-m-d');
+    // ✅ CORRECTION
+    $notifications_envoyees = 0;
     $pdo = getDB();
     try {
         $pdo->beginTransaction();
@@ -28,7 +30,7 @@ use Firebase\JWT\JWT;
             JOIN tontine t ON t.code_tontine = o.code_tontine
             JOIN wallet_tontine w ON w.code_tontine = o.code_tontine
             WHERE o.ordre = t.tour_actuel 
-              AND o.date_tour = ? 
+              AND DATE(o.date_tour) = ? 
               AND o.statut = 0
               AND w.solde_tontine > 0
             FOR UPDATE";
@@ -49,6 +51,14 @@ use Firebase\JWT\JWT;
             if ($montant <= 0) {
                 throw new Exception("Solde insuffisant pour effectuer le Virement.");
             }
+
+
+            $archive = $pdo->prepare("INSERT INTO ordre_tirage_archive 
+                (code_tontine, code_participant, ordre, statut, date_tour, archived_at) 
+                SELECT code_tontine, code_participant, ordre, statut, date_tour, NOW()
+                FROM ordre_tirage 
+                WHERE code_tontine = ? AND code_participant = ? AND statut=1 ORDER BY date_tour DESC LIMIT 1");
+            $archive->execute([$code_tontine, $code_participant]);
 
             // 3) Marquer l'ordre payé
             $u1 = $pdo->prepare("UPDATE ordre_tirage 

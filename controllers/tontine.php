@@ -363,12 +363,24 @@ function get_tontine_details() {
 
         $cagnotte = $nombre_participant * $montant_cotisation * $nombre_cotisation;
 
+
+        // ✅ Vérifier si l'ordre de tirage existe
+        $stmtOrdre = $pdo->prepare("SELECT COUNT(*) as total 
+                                     FROM ordre_tirage 
+                                     WHERE code_tontine = ?");
+        $stmtOrdre->execute([$data['code_tontine']]);
+        $ordreExiste = $stmtOrdre->fetch(PDO::FETCH_ASSOC);
+
+        // ✅ Si pas d'ordre de tirage, tour_actuel = 0
+        $tour_actuel = ($ordreExiste['total'] > 0) ? (int)$tontine['tour_actuel'] : 0;
+
+
         send_response(true, "Tontine récupérée avec succès", [
             "code_tontine" => $tontine['code_tontine'],
             "nom" => $tontine['nom_tontine'],
             "montant" => $tontine['montant_cotisation'],
             "nombre_participant" => $tontine['nombre_participant'],  
-            "tour_actuel" => $tontine['tour_actuel'] ?? '0',  
+            "tour_actuel" => $tour_actuel,  
             "frequence" => $tontine['libelle_frequence'],
             "frequence_paiement" => $tontine['libelle_frequence_paiement'],
             "cagnotte" => $cagnotte,
@@ -698,10 +710,10 @@ function transactions(){
     }
 }
 
-//Récupérer les ordre de tour
+
 function ordrePaiement() {
 
-    $decoder = verifier_token();
+    //$decoder = verifier_token();
 
     $data = json_decode(file_get_contents("php://input"), true);
 
@@ -773,7 +785,7 @@ function ordrePaiement() {
         $cagnotte = $nombre_participant * $montant_cotisation * $nombre_cotisation;
         $tour_actuel = $tontine['tour_actuel'] ?? 0;
 
-        // ✅ CORRECTION : INNER JOIN pour ne récupérer QUE si ordre_tirage existe
+        // ✅ AMÉLIORATION : Utiliser tour_actuel pour déterminer l'état réel
         $sql = "SELECT 
                     o.code_participant, 
                     d.nom_participant, 
@@ -781,14 +793,19 @@ function ordrePaiement() {
                     o.ordre,
                     o.statut,
                     o.date_tour,
+                    t.tour_actuel,
                     CASE 
-                        WHEN o.statut = 2 THEN 'complete'
-                        WHEN o.statut = 1 THEN 'en_cours'
+                        WHEN o.statut = 1 THEN 'complete'
+                        WHEN o.ordre = t.tour_actuel THEN 'en_cours'
+                        WHEN o.ordre < t.tour_actuel THEN 'complete'
+                        WHEN o.ordre > t.tour_actuel THEN 'a_venir'
                         ELSE 'a_venir'
                     END as etat
                 FROM ordre_tirage AS o
                 INNER JOIN participants AS d 
                     ON d.code_participant = o.code_participant
+                INNER JOIN tontine AS t
+                    ON t.code_tontine = o.code_tontine
                 WHERE o.code_tontine = ? 
                 ORDER BY o.ordre ASC";
 
@@ -802,7 +819,7 @@ function ordrePaiement() {
                 'beneficiaires' => [],
                 'statistiques' => [
                     'tours_completes' => 0,
-                    'total_tours' => 0,
+                    'total_tours' => $nombre_participant,
                     'tour_actuel' => 0,
                     'montant_cagnotte' => (double)$cagnotte
                 ]
@@ -813,11 +830,11 @@ function ordrePaiement() {
         // ✅ Traiter les résultats
         $beneficiaires = [];
         $tours_completes = 0;
-        $total_tours = count($resultats);
+        $total_tours = $nombre_participant;
 
         foreach ($resultats as $resultat) {
             // Compter les tours complétés
-            if ($resultat['statut'] == 2) {
+            if ($resultat['statut'] == 1) {
                 $tours_completes++;
             }
 
