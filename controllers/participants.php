@@ -154,7 +154,7 @@ function login_participant() {
                     "numero" => $participant['numro_mobile_money'],
                     "indice_solvabilite"=>$participant['indice_solvabilite'],
                     "niveau_kyc"=>$participant['niveau_kyc'],
-                    "code_tontine" => "",
+                    "code_tontine" => "default code",
                     "jwt_token"=>$token??""
                 ]);
             }
